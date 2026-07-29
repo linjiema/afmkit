@@ -237,17 +237,17 @@ def to_csv_fits(
     (one column per parameter, in the order the parameters first
     appear across the input list), the parameter standard errors
     (columns named ``<name>_stderr``), and the goodness-of-fit
-    statistics (``chi2``, ``redchi``, ``n_data``).
+    statistics (``chi_square``, ``reduced_chi_square``, ``n_data``).
 
     For a batch of WLC fits this yields the column order ``model``,
-    ``p``, ``p_stderr``, ``L``, ``L_stderr``, ``chi2``, ``redchi``,
-    ``n_data`` — matching the WLC model's
+    ``p``, ``p_stderr``, ``L``, ``L_stderr``, ``chi_square``,
+    ``reduced_chi_square``, ``n_data`` — matching the WLC model's
     :attr:`~afmkit.models.wlc.WLCModel.param_names`.
 
     Parameters
     ----------
     fits
-        List of :class:`FitResult` instances.
+        List of :class:`~afmkit.fitting.report.FitResult` instances.
     path
         Destination file path.
     """
@@ -265,15 +265,26 @@ def to_csv_fits(
 
     rows: list[dict[str, Any]] = []
     for fit in fits:
+        # The exporters accept both the new (afmkit.fitting.report)
+        # FitResult and the legacy io-side dataclass — fall back to the
+        # legacy attribute names so older code paths keep working.
+        stderr = getattr(fit, "stderr", None) or getattr(fit, "param_stderr", {}) or {}
+        chi2 = getattr(fit, "chi_square", None)
+        if chi2 is None:
+            chi2 = getattr(fit, "chi2", float("nan"))
+        redchi = getattr(fit, "reduced_chi_square", None)
+        if redchi is None:
+            redchi = getattr(fit, "redchi", float("nan"))
+
         row: dict[str, Any] = {
             "model": fit.model_name,
-            "chi2": fit.chi2,
-            "redchi": fit.redchi,
+            "chi_square": chi2,
+            "reduced_chi_square": redchi,
             "n_data": fit.n_data,
         }
         for name in all_params:
             row[name] = fit.params.get(name, np.nan)
-            row[f"{name}_stderr"] = fit.param_stderr.get(name, np.nan)
+            row[f"{name}_stderr"] = stderr.get(name, np.nan)
         rows.append(row)
 
     df = pd.DataFrame(rows)
@@ -486,16 +497,24 @@ def to_markdown(
                     all_params.append(name)
         lines.append("## Fit results")
         lines.append("")
-        header = ["#", "model", *all_params, "chi2", "redchi", "n_data"]
+        header = ["#", "model", *all_params, "chi_square", "reduced_chi_square", "n_data"]
         lines.append("| " + " | ".join(header) + " |")
         lines.append("| " + " | ".join(["---"] * len(header)) + " |")
         for idx, fit in enumerate(fits):
+            # Accept both the new (afmkit.fitting.report) FitResult
+            # and the legacy io-side dataclass.
+            chi2 = getattr(fit, "chi_square", None)
+            if chi2 is None:
+                chi2 = getattr(fit, "chi2", float("nan"))
+            redchi = getattr(fit, "reduced_chi_square", None)
+            if redchi is None:
+                redchi = getattr(fit, "redchi", float("nan"))
             row: list[str] = [str(idx), fit.model_name]
             for name in all_params:
                 val = fit.params.get(name, float("nan"))
                 row.append(f"{val:.4g}")
-            row.append(f"{fit.chi2:.4g}")
-            row.append(f"{fit.redchi:.4g}")
+            row.append(f"{chi2:.4g}")
+            row.append(f"{redchi:.4g}")
             row.append(str(fit.n_data))
             lines.append("| " + " | ".join(row) + " |")
         lines.append("")

@@ -95,7 +95,14 @@ def _make_fit(
     redchi: float = 0.4,
     n_data: int = 500,
 ) -> FitResult:
-    """Build a synthetic :class:`FitResult` with WLC-shaped parameters."""
+    """Build a synthetic :class:`FitResult` with WLC-shaped parameters.
+
+    The helper writes the legacy ``chi2`` / ``redchi`` / ``param_stderr``
+    field names (because that's what the dataclass here exposes), but
+    :func:`afmkit.io.exporters.to_csv_fits` and
+    :func:`afmkit.io.exporters.to_markdown` accept those names as a
+    backward-compat fallback.
+    """
     return FitResult(
         model_name=model,
         params={"p": p, "L": lc},
@@ -219,12 +226,13 @@ class TestToCsvFits:
 
         assert len(df) == 3
         # The implementation uses dict insertion order: model is
-        # first, then chi2/redchi/n_data, then the parameter columns
-        # in the order they first appear across the input list.
+        # first, then chi_square/reduced_chi_square/n_data, then the
+        # parameter columns in the order they first appear across the
+        # input list.
         assert list(df.columns) == [
             "model",
-            "chi2",
-            "redchi",
+            "chi_square",
+            "reduced_chi_square",
             "n_data",
             "p",
             "p_stderr",
