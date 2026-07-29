@@ -61,6 +61,14 @@ io = [
     "h5py>=3.10",
     "hdf5plugin>=4.3",
 ]
+# Parquet export support. The exporter prefers pyarrow, falls back to
+# fastparquet, and raises ImportError if neither is installed. The
+# pyarrow backend is shipped with type stubs, so installing it
+# silences the mypy strict-mode "import-not-found" complaint on the
+# `import pyarrow` in afmkit.io.exporters.
+parquet = [
+    "pyarrow>=14",
+]
 # Legacy Igor Pro binary wave support.
 igor = [
     "igor>=0.4",
@@ -83,7 +91,7 @@ docs = [
 ]
 # Convenience: install everything an end-user might want.
 all = [
-    "afmkit[io,igor,matlab,plot]",
+    "afmkit[io,parquet,igor,matlab,plot]",
 ]
 # Developer / CI dependencies.
 dev = [
@@ -103,6 +111,11 @@ dev = [
     # the import chain. The [io] extra is still respected for end users
     # who want a minimal install.
     "h5py>=3.10",
+    # pyarrow is the preferred Parquet backend for to_parquet; the
+    # test_exporters module exercises it directly. Install it here so
+    # the CI test matrix has the engine available and mypy --strict
+    # can resolve the `import pyarrow` in afmkit.io.exporters.
+    "pyarrow>=14",
 ]
 
 [project.urls]
