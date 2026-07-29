@@ -41,7 +41,9 @@ classifiers = [
 
 # Hard runtime dependencies — kept minimal so the core stays light.
 dependencies = [
-    "numpy>=1.26",
+    # numpy<2.4 because 2.5+ stubs use PEP 696 TypeVar-default syntax
+    # which mypy cannot parse on the Python 3.12 baseline of our CI matrix.
+    "numpy>=1.26,<2.4",
     "scipy>=1.11",
     "xarray>=2024.1",
     "pandas>=2.1",
@@ -164,7 +166,26 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101", "N802"]  # asserts OK, test names can be long
+# Tests are allowed to use physics-style single-letter variable names
+# (`F`, `L`, `p`, …) and longer assertion expressions. The asserts are
+# essential to test code. The em-dash characters in physics docstrings
+# are typographically correct.
+"tests/**/*.py" = [
+    "S101",  # asserts
+    "N802",  # long test function names
+    "N803",  # uppercase argument names (L, p are physics symbols)
+    "N806",  # uppercase variable names in tests (F, L, p in formulas)
+    "RUF002", # en-dash in docstrings
+    "RUF003", # en-dash in comments
+    "SIM300", # Yoda conditions (math expressions are easier to read forward)
+]
+# The polymer models use single-letter physics symbols by convention
+# and em-dashes are typographically correct in physical-unit ranges.
+"src/afmkit/models/**/*.py" = [
+    "N803",   # `L` is the canonical symbol for contour length
+    "RUF002", # en-dash in docstrings
+    "RUF003", # en-dash in comments
+]
 "docs/**/*.py" = ["INP001"]
 
 [tool.ruff.format]

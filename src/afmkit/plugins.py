@@ -47,21 +47,25 @@ def register_loader() -> type:
     :mod:`afmkit.io.base`. Returning a class (not an instance) lets afmkit
     defer construction until it actually needs to read a file.
     """
+    raise NotImplementedError  # pragma: no cover  # type: ignore[empty-body]
 
 
 @hookspec
 def register_model() -> type:
     """Return a ``PolymerModel`` subclass to register."""
+    raise NotImplementedError  # pragma: no cover  # type: ignore[empty-body]
 
 
 @hookspec
 def register_baseline() -> type:
     """Return a ``BaselineCorrector`` subclass to register."""
+    raise NotImplementedError  # pragma: no cover  # type: ignore[empty-body]
 
 
 @hookspec
 def register_fitter() -> type:
     """Return a ``Fitter`` subclass to register."""
+    raise NotImplementedError  # pragma: no cover  # type: ignore[empty-body]
 
 
 # -- Plugin manager singleton --------------------------------------------
@@ -74,8 +78,11 @@ def get_plugin_manager() -> pluggy.PluginManager:
     registered directly. Third-party entry points are discovered from
     installed distributions.
     """
+    import sys
+
     pm = pluggy.PluginManager(PROJECT_NAME)
-    pm.add_hookspecs(__name__)
+    # add_hookspecs wants the module object, not its name string.
+    pm.add_hookspecs(sys.modules[__name__])
     # Built-in registrations are added by the IO/models submodules at
     # import time via register().
     pm.load_setuptools_entrypoints(PROJECT_NAME)
