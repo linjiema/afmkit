@@ -21,3 +21,8 @@ registered with the model registry — no monkey-patching, no global state.
 """
 
 from __future__ import annotations
+
+from afmkit.models.base import PolymerModel
+from afmkit.models.wlc import WLCModel
+
+__all__ = ["PolymerModel", "WLCModel"]
