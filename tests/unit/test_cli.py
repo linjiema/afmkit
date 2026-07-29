@@ -33,9 +33,7 @@ runner = CliRunner()
 # -- Local fixtures -------------------------------------------------------
 
 
-def _save_synthetic_hdf5(
-    tmp_path: Path, *, n_curves: int = 2, n_points: int = 300
-) -> Path:
+def _save_synthetic_hdf5(tmp_path: Path, *, n_curves: int = 2, n_points: int = 300) -> Path:
     """Write a small afmkit HDF5 session with ``n_curves`` WLC curves.
 
     The extension / force data is generated with the same WLC formula
@@ -159,9 +157,7 @@ class TestImport:
         _save_synthetic_jpk_txt(d / "b.txt", k=0.1)
         out = tmp_path / "session.h5"
 
-        result = runner.invoke(
-            app, ["import", str(d), "--output", str(out), "--k", "0.1"]
-        )
+        result = runner.invoke(app, ["import", str(d), "--output", str(out), "--k", "0.1"])
         assert result.exit_code == 0, result.output
         assert out.exists()
         # 2 files * 2 directions = 4 curves in the merged batch.
@@ -174,9 +170,7 @@ class TestImport:
         d = tmp_path / "raw"
         d.mkdir()
         _save_synthetic_jpk_txt(d / "a.txt")
-        result = runner.invoke(
-            app, ["import", str(d), "--output", str(tmp_path / "session.h5")]
-        )
+        result = runner.invoke(app, ["import", str(d), "--output", str(tmp_path / "session.h5")])
         assert result.exit_code == 1
         combined = result.output + (result.stderr or "")
         assert "--k" in combined or "k" in combined.lower()
@@ -192,9 +186,7 @@ class TestImport:
 
         # Non-recursive walk should find only "top.txt" → 2 curves.
         out_a = tmp_path / "nonrec.h5"
-        r_a = runner.invoke(
-            app, ["import", str(d), "--output", str(out_a), "--k", "0.1"]
-        )
+        r_a = runner.invoke(app, ["import", str(d), "--output", str(out_a), "--k", "0.1"])
         assert r_a.exit_code == 0, r_a.output
 
         # Recursive walk should find both → 4 curves.
@@ -290,9 +282,7 @@ class TestFit:
 
 class TestExport:
     @pytest.mark.parametrize("ext,fmt", [("csv", "csv"), ("mat", "mat"), ("parquet", "parquet")])
-    def test_export_round_trips_each_format(
-        self, tmp_path: Path, ext: str, fmt: str
-    ) -> None:
+    def test_export_round_trips_each_format(self, tmp_path: Path, ext: str, fmt: str) -> None:
         h5 = _save_synthetic_hdf5(tmp_path, n_curves=2)
         out = tmp_path / f"results.{ext}"
         result = runner.invoke(
@@ -339,9 +329,7 @@ class TestExport:
 
     def test_export_missing_session_exits_1(self, tmp_path: Path) -> None:
         ghost = tmp_path / "nope.h5"
-        result = runner.invoke(
-            app, ["export", str(ghost), "--output", str(tmp_path / "x.csv")]
-        )
+        result = runner.invoke(app, ["export", str(ghost), "--output", str(tmp_path / "x.csv")])
         assert result.exit_code == 1
         combined = result.output + (result.stderr or "")
         assert "not found" in combined.lower()
