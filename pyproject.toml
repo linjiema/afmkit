@@ -98,6 +98,11 @@ dev = [
     "pre-commit>=3.7",
     "ipython>=8.20",
     "ipykernel>=6.29",
+    # h5py is needed for the io module's top-level imports (HDF5Store is
+    # re-exported there). Without this, the dev / CI test matrix fails on
+    # the import chain. The [io] extra is still respected for end users
+    # who want a minimal install.
+    "h5py>=3.10",
 ]
 
 [project.urls]
@@ -219,6 +224,28 @@ ignore_missing_imports = true
 # module is small and well-tested, so the loss of static guarantees
 # is acceptable.
 module = "h5py.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# pandas ships type hints in source but they require the ``pandas-stubs``
+# companion package, which is not part of the runtime dependencies
+# (kept optional to keep the install footprint small). Treat as
+# untyped for static analysis; the IO layer is well-tested at runtime.
+module = "pandas.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# scipy.io.savemat / loadmat is exercised by :func:`to_mat`. The
+# ``scipy-stubs`` package is not a runtime dependency; fall back to
+# dynamic typing for the small surface area we touch.
+module = "scipy.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# lmfit is the fitting backend; it ships without a ``py.typed`` marker,
+# so mypy falls back to dynamic typing for the small surface area the
+# fitting layer touches (``Model``, ``Parameters``, ``ModelResult``).
+module = "lmfit.*"
 ignore_missing_imports = true
 
 # =============================================================================
