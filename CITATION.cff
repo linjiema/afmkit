@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use afmkit in your research, please cite it as below."
+title: "afmkit"
+type: software
+date-released: 2026-07-29
+license: MIT
+url: "https://github.com/linjiema/afmkit"
+authors:
+  - name: "The afmkit developers"
+keywords:
+  - atomic-force-microscopy
+  - force-spectroscopy
+  - single-molecule
+  - worm-like-chain
+  - biophysics
+  - jpk
+preferred-citation:
+  type: software
+  title: "afmkit: a Python toolkit for single-molecule force spectroscopy"
+  year: 2026
+  url: "https://github.com/linjiema/afmkit"
