@@ -318,9 +318,9 @@ class TestWLCModelGuessParams:
             for name, (lo, hi), value in zip(
                 model.param_names, model.param_bounds, guess.values(), strict=True
             ):
-                assert lo <= value <= hi, (
-                    f"guess_params({name}={value}) out of bounds [{lo}, {hi}] for x_max={x_max}"
-                )
+                assert (
+                    lo <= value <= hi
+                ), f"guess_params({name}={value}) out of bounds [{lo}, {hi}] for x_max={x_max}"
 
     def test_p_guess_is_protein_default(self) -> None:
         # The spec fixes the p default at 0.4 nm — a common value for
