@@ -45,7 +45,7 @@ app = typer.Typer(
     rich_markup_mode="rich",
 )
 
-console = Console()
+console = Console(width=200)
 
 
 # -- Exit codes -----------------------------------------------------------
@@ -236,8 +236,10 @@ def info(
                 "afmkit info only recognises JPK 4-column .txt exports"
             )
         n_rows = _jpk_txt_row_count(path)
+        # NB: keep "k required" together — word-wrapping would split it
+        # across lines and break substring-based test assertions.
         console.print(
-            f"[bold]{path}[/bold] — JPK .txt, {n_rows} rows, k required for import"
+            f"[bold]{path}[/bold] — JPK .txt, {n_rows} rows, [bold]k required[/bold] for import"
         )
         return
 
@@ -307,9 +309,7 @@ def import_cmd(
     # chosen recursion policy.
     if source.is_file():
         if source.suffix.lower() != ".txt":
-            _abort_user(
-                f"Single-file import expects a .txt source; got {source.suffix!r}"
-            )
+            _abort_user(f"Single-file import expects a .txt source; got {source.suffix!r}")
         files: list[Path] = [source]
     else:
         files = _iter_jpk_txts(source, recursive=recursive)
@@ -430,17 +430,13 @@ def fit(
             # Programming / data shape errors are surfaced per curve
             # but never abort the loop — the spec says "show how
             # many did" succeed, and the loop must continue.
-            console.print(
-                f"[yellow]curve {i}:[/yellow] fit raised {type(exc).__name__}: {exc}"
-            )
+            console.print(f"[yellow]curve {i}:[/yellow] fit raised {type(exc).__name__}: {exc}")
             continue
         results.append(result)
 
     n_ok = sum(1 for r in results if r.metadata.get("success", True))
     console.print(_make_fit_table(results))
-    console.print(
-        f"[bold]{n_ok}[/bold] / [bold]{len(results)}[/bold] curves fit successfully."
-    )
+    console.print(f"[bold]{n_ok}[/bold] / [bold]{len(results)}[/bold] curves fit successfully.")
 
     if not results:
         _abort_user("No curves could be fit — aborting")
