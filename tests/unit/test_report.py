@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import math
-from types import SimpleNamespace
 
 import lmfit
 import numpy as np
@@ -276,42 +275,27 @@ class TestFromLmfit:
 
     def test_from_lmfit_with_none_covariance(self) -> None:
         # lmfit sets `result.covar` to None when the covariance could
-        # not be estimated (e.g. a non-converging fit). from_lmfit
-        # must propagate None rather than synthesise a zero matrix.
+        # not be estimated (e.g. a non-converging fit, or all
+        # parameters fixed). from_lmfit must propagate None rather
+        # than synthesise a zero matrix.
         #
-        # We construct a synthetic ModelResult with covar=None
-        # because scipy.optimize.leastsq rejects under-determined
-        # problems at the input-validation stage, so a real fit
-        # can't actually reach the "no covariance" state.
+        # Run a real fit with all parameters fixed — lmfit reliably
+        # returns covar=None in that case, and the synthetic data
+        # matches the model exactly so chisqr is 0.
         params = lmfit.Parameters()
         params.add("a", value=1.0)
         params.add("b", value=2.0)
-        # Make every parameter fixed so result.covar is None.
         for p in params.values():
             p.vary = False
-        # Best_values for all-fixed params is just the initial values.
-        best = {"a": 1.0, "b": 2.0}
+        model = lmfit.Model(
+            lambda x, a, b: np.asarray(x, dtype=float) * a + b,
+            independent_vars=["x"],
+        )
         x = np.arange(10, dtype=np.float64)
         y = x.astype(np.float64) * 1.0 + 2.0
-        result = SimpleNamespace(
-            best_values=best,
-            best_fit=y,
-            residual=np.zeros_like(y),
-            params=params,
-            covar=None,
-            success=True,
-            message="all parameters fixed",
-            method="leastsq",
-            chisqr=0.0,
-            redchi=0.0,
-            ndata=10,
-            nvarys=0,
-            aic=float("nan"),
-            bic=float("nan"),
-            rsquared=1.0,
-        )
-        fr = FitResult.from_lmfit(model_name="dummy", result=result, x=x, y=y)
-        # Under-determined system → covariance is None.
+        lm_result = model.fit(y, params, x=x, method="leastsq")
+        fr = FitResult.from_lmfit(model_name="dummy", result=lm_result, x=x, y=y)
+        # All-fixed params → no covariance was estimated.
         assert fr.covariance is None
         # Stderr entries are NaN when the covariance is unavailable
         # (or for fixed parameters — both are reported as NaN).
