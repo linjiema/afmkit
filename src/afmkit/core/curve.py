@@ -341,6 +341,50 @@ class CurveBatch:
         chosen = [self._curves[i] for i in idx_list]
         return CurveBatch(chosen, name=self.name, metadata=self.metadata)
 
+    @classmethod
+    def concat(cls, batches: Iterable[CurveBatch], *, name: str | None = None) -> CurveBatch:
+        """Concatenate multiple :class:`CurveBatch` objects into a new one.
+
+        The resulting batch preserves the **input order** — curves from
+        the first input batch come first, then the second, and so on.
+        Per-curve metadata is preserved untouched. Batch-level
+        ``name`` and ``metadata`` are **not** taken from the inputs;
+        pass them explicitly via the ``name`` argument and the
+        returned batch's :attr:`metadata` (mutate after the call) when
+        you need to surface the combined provenance.
+
+        The motivation is the ``afmkit import`` flow: walking a folder
+        of JPK ``.txt`` files produces one batch per file, and the
+        caller wants a single batch to feed into ``save_hdf5``.
+
+        Parameters
+        ----------
+        batches
+            Iterable of :class:`CurveBatch` instances. Empty iterables
+            are allowed and produce an empty batch.
+        name
+            Optional name for the new batch. ``None`` (the default)
+            leaves it unset; pass an explicit value if the merged
+            batch has a meaningful combined identity (e.g. the source
+            folder name).
+
+        Returns
+        -------
+        CurveBatch
+            A new batch containing all curves from the inputs, in
+            order. The input batches are not modified.
+        """
+        merged: list[ForceCurve] = []
+        for batch in batches:
+            # Reject non-CurveBatch early so a typo surfaces as a clear
+            # error rather than a confusing AttributeError on `.n_curves`.
+            if not isinstance(batch, CurveBatch):
+                raise TypeError(
+                    f"CurveBatch.concat expects CurveBatch instances; got {type(batch).__name__}"
+                )
+            merged.extend(batch._curves)
+        return cls(merged, name=name)
+
     def to_xarray(self) -> xr.Dataset:
         """Combine all curves into a single :class:`xarray.Dataset`.
 
