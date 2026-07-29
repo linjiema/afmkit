@@ -10,7 +10,7 @@ Loaders (read)
 - :class:`~afmkit.io.igor_ibw.IgorIBWLoader` — read legacy Igor Binary Wave
   (``.ibw``) data for backward compatibility.
 - :class:`~afmkit.io.hdf5_store.HDF5Store` — read/write afmkit's native
-  HDF5 + xarray format.
+  HDF5 format (bidirectional; not a :class:`~afmkit.io.base.Loader`).
 
 Exporters (write)
 ~~~~~~~~~~~~~~~~~
@@ -26,3 +26,11 @@ register new formats via the ``afmkit.loaders`` entry point — see
 """
 
 from __future__ import annotations
+
+from afmkit.io.hdf5_store import HDF5Store, load_hdf5, save_hdf5
+
+__all__ = [
+    "HDF5Store",
+    "load_hdf5",
+    "save_hdf5",
+]

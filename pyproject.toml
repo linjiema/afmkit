@@ -213,6 +213,14 @@ ignore_missing_imports = false
 module = "igor.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# h5py ships without type stubs (no py.typed marker) — fall back to
+# dynamic typing for the IO layer that touches it. The hdf5_store
+# module is small and well-tested, so the loss of static guarantees
+# is acceptable.
+module = "h5py.*"
+ignore_missing_imports = true
+
 # =============================================================================
 # pytest
 # =============================================================================
