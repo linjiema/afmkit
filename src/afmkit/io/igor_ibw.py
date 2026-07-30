@@ -5,23 +5,42 @@ This module provides :class:`IgorIBWLoader`, :func:`load_ibw`,
 extension data through the legacy Igor Pro binary wave format.
 
 The module's read path uses the optional third-party ``igor`` package
-(``pip install igor>=0.4``).  The package's :func:`igor.binarywave.load`
-returns a dict that is converted into an afmkit :class:`ForceCurve`.
+(``pip install 'afmkit[igor]'`` → ``pip install igor>=0.3``).  The
+package's :func:`igor.binarywave.load` returns a dict that is
+converted into an afmkit :class:`ForceCurve`.  The reader
+handles wave versions 1, 2, 3, and 5.
 
-The module's write path is a small, stdlib-only (:mod:`struct`) v2
-binary wave emitter.  We do not use the upstream library for writing
-because the released ``igor==0.3`` on PyPI ships with
+The module's write path is a small, stdlib-only (:mod:`struct`)
+emitter.  We do not use the upstream library for writing because
+the released ``igor==0.3`` on PyPI ships with
 :func:`igor.binarywave.save` raising ``NotImplementedError`` and
-several ``pre_pack`` paths unimplemented.  The v2 format is documented
-in WaveMetrics technical note TN003 and is sufficient for the
-2-column (extension, force) waves afmkit produces: we store
-``(extension_nm, force_pN)`` pairs interleaved into a 1-D
-``float64`` array and tag the file with an afmkit-specific
-``"afmkit=2col"`` marker in the wave ``note`` so the reader can
-reconstruct the column structure.  All other metadata is encoded
-in the wave ``note`` as ``"key=value; key=value; …"``.
+several ``pre_pack`` paths unimplemented.  afmkit supports writing
+two wave versions:
 
-The on-disk layout written by :func:`save_ibw` is:
+  - **v2** (default) — the original Igor Pro TN003 format.  1-D
+    float64 wave, 18-char wave name, 3-char units, 16-byte trailing
+    padding.  Sufficient for the 2-column (extension, force) waves
+    afmkit produces.  All versions of Igor Pro can read this.
+
+  - **v5** — the modern Igor Pro format (added in v6.00).  1-D
+    float64 wave, 31-char wave name, extended dim units, no
+    trailing padding.  Required by Igor Pro 7+ when writing waves
+    that reference text or extended dimension units; also the
+    format newer versions of Igor prefer for new waves.  We emit
+    the minimal valid v5 (no dataEUnits, no dimEUnits, no
+    dimLabels, no sIndices) so the file is still self-contained
+    and round-trips through the ``igor`` reader.
+
+In both versions, ``(extension_nm, force_pN)`` pairs are
+interleaved into a 1-D ``float64`` array and the file is tagged
+with an afmkit-specific ``"afmkit=2col"`` marker in the wave
+``note`` so the reader can reconstruct the column structure.  All
+other metadata is encoded in the wave ``note`` as
+``"key=value; key=value; …"``.
+
+The on-disk layouts written by :func:`save_ibw` are:
+
+**v2** (default):
 
 ====  ========================  =================================
 Off   Field                     Notes
@@ -38,6 +57,38 @@ Off   Field                     Notes
 142 + data_size
       ``note`` (note_size B)    UTF-8 ``"afmkit=2col; k=…; …"``.
 ====  ========================  =================================
+
+**v5**:
+
+====  ========================  =================================
+Off   Field                     Notes
+====  ========================  =================================
+0     ``version`` (int16)       Always 5.
+2     BinHeader5 (62 / 128 B)   10 fields, 16-bit ``checksum`` first.
+                                 Native ``l`` (4 B on 32-bit, 8 B on
+                                 64-bit). All ``*Size`` counts
+                                 (dataEUnitsSize, dimEUnitsSize,
+                                 dimLabelsSize, sIndicesSize) are
+                                 0 for our minimal v5.
+     WaveHeader5 (~314 / 436 B) ``type=NT_FP64``, ``P`` (4 B
+                                 unsigned) pointer fields,
+                                 ``bname`` 31 chars + NUL,
+                                 ``dataUnits="pN"``,
+                                 ``dimUnits[0]="nm"``,
+                                 ``npnts = 2*N``, ``nDim[0]=2*N``,
+                                 ``nDim[1..3]=0``,
+                                 ``sfA[0]=1``, ``sfB[0]=0``.
+     ``wData`` (2*N · 8 B)     Interleaved ``(ext[i], force[i])``.
+     ``note`` (note_size B)    UTF-8 ``"afmkit=2col; k=…; …"``.
+====  ========================  =================================
+
+The on-disk size of the v5 headers is **platform-dependent**:
+v5 packs its headers with native field sizes (no ``<`` byte-order
+prefix), matching :mod:`igor.binarywave`. On a 64-bit host the
+BinHeader5 is 128 B (2 ``h`` + 6 alignment padding + 15 ``l`` x 8)
+and the WaveHeader5 is 436 B; on a 32-bit host they are 62 B and
+~314 B respectively. The writer computes the size at import time
+from the actual struct format.
 
 All sizes use the standard (no-alignment) convention; the on-disk
 byte count matches the value of ``wfmSize``.
@@ -88,7 +139,7 @@ except ImportError as _exc:  # pragma: no cover - exercised only without igor
 # Constants for the v2 binary wave on-disk layout
 # ---------------------------------------------------------------------------
 
-#: Constant for ``NT_FP64`` (64-bit IEEE float) in the v2 ``type`` field.
+#: Constant for ``NT_FP64`` (64-bit IEEE float) in the v2 / v5 ``type`` field.
 _NT_FP64: int = 4
 
 #: Size of BinHeader2 on disk, in bytes (standard / no-alignment layout).
@@ -111,6 +162,85 @@ _BNAME2_LEN: int = 20
 
 #: Length of a v2 ``dataUnits`` / ``xUnits`` field, including the NUL.
 _UNITS2_LEN: int = 4
+
+# ---------------------------------------------------------------------------
+# v5 format constants — Igor Pro 6.00+ binary wave (TN003 v5 layout)
+# ---------------------------------------------------------------------------
+
+#: Wave-name length for v5 (31 chars + trailing NUL = 32 bytes on disk).
+_BNAME5_LEN: int = 32
+
+#: Length of a v5 ``dataUnits`` / ``dimUnits[i]`` field, including the NUL.
+_UNITS5_LEN: int = 4
+
+#: Size of BinHeader5 on disk, in bytes.
+#:
+#: Unlike v2 (which uses the standard ``<`` byte-order prefix and is
+#: always 110 B regardless of host word size), v5 packs its headers
+#: with the **``=`` (native byte order, standard field sizes)**
+#: convention — the same one :mod:`igor.binarywave` uses on read
+#: (``Wave.byte_order = '='`` in :mod:`igor.binarywave.load`).
+#: On a little-endian host (everything we test on), ``=`` is
+#: equivalent to ``<``, so the on-disk layout is platform-stable
+#: at 62 B for the BinHeader5.
+_BIN_HEADER5_SIZE: int = struct.calcsize("=" + "H" + "l" * 7 + "4l" + "4l")
+
+#: Size of WaveHeader5 on disk, in bytes.
+#:
+#: Same ``=`` convention as :data:`_BIN_HEADER5_SIZE`; computed
+#: from :data:`_FMT_WAVE5` at module import time. 320 B on
+#: little-endian hosts (all CI platforms), regardless of whether
+#: the host is 32- or 64-bit. The ``P`` → ``I`` substitution in
+#: :mod:`igor.binarywave` is what makes this stable: without it,
+#: the ``P`` (pointer) fields would be 8 B on 64-bit hosts and
+#: the on-disk size would be 436 B, which the upstream reader
+#: does not accept.
+_WAVE_HEADER5_SIZE: int = struct.calcsize(
+    "=I"  # next (P → I, 4 B)
+    "L"  # creationDate
+    "L"  # modDate
+    "l"  # npnts
+    "h"  # type
+    "h"  # dLock
+    "6c"  # whpad1
+    "h"  # whVersion
+    "32c"  # bname
+    "l"  # whpad2
+    "I"  # dFolder (P → I)
+    "4l"  # nDim
+    "4d"  # sfA
+    "4d"  # sfB
+    "4c"  # dataUnits
+    "16c"  # dimUnits (4 dims x 4 B)
+    "h"  # fsValid
+    "h"  # whpad3
+    "d"  # topFullScale
+    "d"  # botFullScale
+    "I"  # dataEUnits (P → I)
+    "4I"  # dimEUnits (4xP → 4xI)
+    "4I"  # dimLabels (4xP → 4xI)
+    "I"  # waveNoteH (P → I)
+    "16l"  # whUnused
+    "h"  # aModified
+    "h"  # wModified
+    "h"  # swModified
+    "c"  # useBits
+    "c"  # kindBits
+    "I"  # formula (P → I)
+    "l"  # depID
+    "h"  # whpad4
+    "h"  # srcFldr
+    "I"  # fileName (P → I)
+    "I"  # sIndices (P → I)
+)
+
+#: Number of dimensions in a v5 wave (always 4 in the WaveHeader5 struct,
+#: even for a 1-D wave — only ``nDim[0]`` is nonzero for us).
+_WAVE_HEADER5_MAXDIMS: int = 4
+
+#: ``whVersion`` value the v5 header wants (per the spec comment in
+#: ``igor.binarywave``: "Write 1. Ignore on read.").
+_WAVE_HEADER5_WHVERSION: int = 1
 
 #: Pattern we use to detect our own 2-column round-tripped files.
 _NOTE_MARKER: str = "afmkit=2col"
@@ -167,6 +297,88 @@ _FMT_WAVE2 = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Low-level helpers — packing the v5 binary wave on disk
+# ---------------------------------------------------------------------------
+#
+# v5 uses the ``=`` (native byte order, standard field sizes) byte
+# order prefix — the same convention :mod:`igor.binarywave` uses
+# on read. On a little-endian host (everything we test on) ``=`` is
+# identical to ``<``, so the on-disk layout is platform-stable at
+# 62 B for the BinHeader5 and 320 B for the WaveHeader5. The ``P``
+# (pointer) fields in WaveHeader5 are emitted as ``I`` (4-byte
+# unsigned int) — the same ``P`` → ``I`` substitution the upstream
+# reader applies for ILP32 / LP64 compatibility.
+_FMT_BIN5_TRAILING = (
+    "l"  # wfmSize
+    "l"  # formulaSize
+    "l"  # noteSize
+    "l"  # dataEUnitsSize
+    "4l"  # dimEUnitsSize[0..3] (4 dims)
+    "4l"  # dimLabelsSize[0..3] (4 dims)
+    "l"  # sIndicesSize
+    "l"  # optionsSize1 (reserved; 0)
+    "l"  # optionsSize2 (reserved; 0)
+)
+
+#: Full BinHeader5 — checksum is computed separately and substituted
+#: in as the first 2 bytes. On-disk size: 62 B with the ``=`` byte
+#: order prefix. See :data:`_BIN_HEADER5_SIZE` for the resolved
+#: value.
+_FMT_BIN5 = "=H" + _FMT_BIN5_TRAILING  # '=H' + 15x'l' (no padding)
+
+#: WaveHeader5 — field order matches the ``WaveHeader5`` struct in
+#: :mod:`igor.binarywave` (verified against igor==0.3). ``=`` byte
+#: order prefix; on-disk size: 320 B.
+#:
+#: ``P`` (pointer) fields are emitted as ``I`` (4-byte unsigned
+#: int) — the same ``P`` → ``I`` substitution the upstream reader
+#: applies for ILP32 / LP64 compatibility. This includes the
+#: ``next`` field at the start, which the igor source declares as
+#: ``P`` but the on-disk size must be 4 B, not 8 B. (If we used
+#: ``Q`` / 8 B for ``next``, the reader's 4-byte interpretation
+#: would be off by 4 B and the entire WaveHeader5 would parse
+#: wrong.)
+_FMT_WAVE5 = (
+    "=I"  # next (P → I, 4 B)
+    "L"  # creationDate (4)
+    "L"  # modDate (4)
+    "l"  # npnts (4)
+    "h"  # type (2)
+    "h"  # dLock (2)
+    "6c"  # whpad1 (6)
+    "h"  # whVersion (2)
+    "32c"  # bname (32)
+    "l"  # whpad2 (4)
+    "I"  # dFolder (P → I, 4 B)
+    "4l"  # nDim[0..3] (16)
+    "4d"  # sfA[0..3] (32)
+    "4d"  # sfB[0..3] (32)
+    "4c"  # dataUnits (4)
+    "16c"  # dimUnits[0..3] (16) — 4 dims x 4 bytes
+    "h"  # fsValid (2)
+    "h"  # whpad3 (2)
+    "d"  # topFullScale (8)
+    "d"  # botFullScale (8)
+    "I"  # dataEUnits (P → I, 4 B)
+    "4I"  # dimEUnits[0..3] (16; 4 pointers → 4xI)
+    "4I"  # dimLabels[0..3] (16; 4 pointers → 4xI)
+    "I"  # waveNoteH (P → I, 4 B)
+    "16l"  # whUnused[0..15] (64)
+    "h"  # aModified (2)
+    "h"  # wModified (2)
+    "h"  # swModified (2)
+    "c"  # useBits (1)
+    "c"  # kindBits (1)
+    "I"  # formula (P → I, 4 B)
+    "l"  # depID (4)
+    "h"  # whpad4 (2)
+    "h"  # srcFldr (2)
+    "I"  # fileName (P → I, 4 B)
+    "I"  # sIndices (P → I, 4 B)
+)
+
+
 def _split_bytes(blob: bytes) -> list[bytes]:
     """Expand a ``bytes`` object into a list of one-byte :class:`bytes`
     suitable for use with the ``c`` struct format code.
@@ -197,11 +409,16 @@ def _truncate_bytes(text: str, max_len: int) -> bytes:
 
 
 def _compute_checksum(bin_no_cksum: bytes, wave_header: bytes) -> int:
-    """Return the v2 16-bit checksum that zeroes the header sum.
+    """Return the 16-bit checksum that zeroes the header sum.
 
     Mirrors :func:`igor.util.checksum` from the upstream package.  The
     checksum is chosen so that the 16-bit sum of every 16-bit word in
     the (bin header + wave header) buffer is zero.
+
+    The same algorithm works for both v2 and v5 — the only difference
+    is *where* in the bin header the resulting checksum is stored
+    (trailing 2 bytes for v2; leading 2 bytes for v5). The caller
+    handles the placement; this function just computes the value.
     """
     full = bin_no_cksum + wave_header
     n_shorts = len(full) // 2
@@ -544,13 +761,13 @@ def _encode_note(
     return ("; ".join(tokens) + "\x00").encode("utf-8")
 
 
-def save_ibw(curve: ForceCurve, path: Path | str) -> None:
+def save_ibw(curve: ForceCurve, path: Path | str, *, version: int = 2) -> None:
     """Write a single :class:`ForceCurve` to a ``.ibw`` file.
 
-    The output is a v2 Igor Binary Wave with the (extension, force)
-    pairs interleaved into a 1-D ``float64`` array and tagged with
-    ``"afmkit=2col"`` in the wave ``note`` so :func:`load_ibw` can
-    reconstruct the column structure on the way back in.
+    The (extension, force) pairs are interleaved into a 1-D
+    ``float64`` array and the file is tagged with ``"afmkit=2col"``
+    in the wave ``note`` so :func:`load_ibw` can reconstruct the
+    column structure on the way back in.
 
     Parameters
     ----------
@@ -561,6 +778,17 @@ def save_ibw(curve: ForceCurve, path: Path | str) -> None:
     path
         Destination file.  Parent directories are created if missing.
         May be a :class:`str` or :class:`pathlib.Path`.
+    version
+        Igor Binary Wave version.  ``2`` is the default (works in
+        all versions of Igor Pro).  ``5`` is the modern format
+        (Igor Pro 6.00+) and is required by Igor Pro 7+ for
+        waves that reference text or extended dimension units.
+        Round-trips through the same :func:`load_ibw` either way.
+
+    Raises
+    ------
+    ValueError
+        If ``version`` is not 2 or 5.
 
     Notes
     -----
@@ -569,10 +797,40 @@ def save_ibw(curve: ForceCurve, path: Path | str) -> None:
     has attached to ``curve.metadata``.  A 16-bit checksum is computed
     over the bin header and wave header so the file passes Igor's
     internal validation.
+
+    See :func:`_save_ibw_v2` and :func:`_save_ibw_v5` for the
+    per-version binary layout.
     """
+    if version not in (2, 5):
+        raise ValueError(f"save_ibw: version must be 2 or 5, got {version!r}")
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
+    if version == 2:
+        _save_ibw_v2(curve, path)
+    else:
+        _save_ibw_v5(curve, path)
+
+
+def _build_ibw_payload(curve: ForceCurve) -> tuple[bytes, bytes, dict[str, Any]]:
+    """Build the (interleaved_payload, note_bytes, metadata) tuple.
+
+    Both :func:`_save_ibw_v2` and :func:`_save_ibw_v5` start from the
+    same logical structure: a 1-D float64 array with
+    (extension, force) pairs interleaved, a UTF-8 note string with
+    the afmkit metadata, and a wave name derived from the source
+    file. Splitting the construction out of the per-version writer
+    keeps the per-version code focused on byte layout, not on
+    afmkit-level semantics.
+
+    Returns
+    -------
+    tuple
+        ``(interleaved_bytes, note_bytes, ctx)`` where ``ctx`` is a
+        dict with the keys ``wave_name``, ``bname_v2``,
+        ``bname_v5``, ``n``, ``top``, ``bot`` consumed by the
+        per-version writers.
+    """
     ext = np.asarray(curve.extension, dtype=np.float64)
     force = np.asarray(curve.force, dtype=np.float64)
     n = ext.size
@@ -582,12 +840,15 @@ def save_ibw(curve: ForceCurve, path: Path | str) -> None:
     interleaved[0::2] = ext
     interleaved[1::2] = force
 
-    # Wave name — use the source file's stem if present, fall back to a
-    # stable placeholder.
+    # Wave name — use the source file's stem if present, fall back to
+    # a stable placeholder. The v2 bname is 20 bytes (incl. NUL);
+    # the v5 bname is 32 bytes (incl. NUL). The same logical name
+    # gets padded / truncated to whichever width the version
+    # supports, so a v2 file and a v5 file for the same curve
+    # round-trip through the same wave name in Igor Pro.
     meta = dict(curve.metadata)
     source = meta.get("source_file")
     wave_name = Path(source).stem if isinstance(source, str) and source else "afmkit_wave"
-    bname = _truncate_bytes(wave_name, _BNAME2_LEN)
 
     # k_cantilever, if known, goes into the note (in addition to the
     # metadata dict) so the reader can recover it without consulting
@@ -609,9 +870,39 @@ def save_ibw(curve: ForceCurve, path: Path | str) -> None:
         if isinstance(value, str | int | float | bool):
             extra[key] = value
     note = _encode_note(k_cantilever=k_value, extra=extra)
-    note_size = len(note)
 
-    data_bytes = interleaved.tobytes()
+    ctx: dict[str, Any] = {
+        "wave_name": wave_name,
+        "bname_v2": _truncate_bytes(wave_name, _BNAME2_LEN),
+        "bname_v5": _truncate_bytes(wave_name, _BNAME5_LEN),
+        "n": n,
+        "top": float(interleaved.max()) if n else 0.0,
+        "bot": float(interleaved.min()) if n else 0.0,
+    }
+    return interleaved.tobytes(), note, ctx
+
+
+def _save_ibw_v2(curve: ForceCurve, path: Path) -> None:
+    """Write a v2 Igor Binary Wave (default; works in all Igor Pro versions).
+
+    The on-disk layout is::
+
+        0     version (int16)         = 2
+        2     BinHeader2 (14 B)
+        16    WaveHeader2 (110 B)
+        126   wData (2*N · 8 B)
+        126 + data_size
+              padding (16 B)
+        142 + data_size
+              note (note_size B)
+
+    See module docstring for the field-by-field table.
+    """
+    data_bytes, note, ctx = _build_ibw_payload(curve)
+    n = ctx["n"]
+    note_size = len(note)
+    bname = ctx["bname_v2"]
+
     wfm_size = _WAVE_HEADER2_SIZE + len(data_bytes) + _PADDING2_SIZE
 
     # Build the headers.  We pack everything in two steps so the
@@ -641,8 +932,8 @@ def save_ibw(curve: ForceCurve, path: Path | str) -> None:
         0,  # wModified
         0,  # swModified
         1,  # fsValid
-        float(interleaved.max()) if n else 0.0,  # topFullScale
-        float(interleaved.min()) if n else 0.0,  # botFullScale
+        ctx["top"],  # topFullScale
+        ctx["bot"],  # botFullScale
         b"\x00",  # useBits
         b"\x00",  # kindBits
         0,  # formula
@@ -671,5 +962,145 @@ def save_ibw(curve: ForceCurve, path: Path | str) -> None:
         + data_bytes  # wData
         + padding  # v2 padding
         + note  # note
+    )
+    path.write_bytes(file_bytes)
+
+
+def _save_ibw_v5(curve: ForceCurve, path: Path) -> None:
+    """Write a v5 Igor Binary Wave (Igor Pro 6.00+).
+
+    The on-disk layout is::
+
+        0     version (int16)         = 5
+        2     BinHeader5 (62 B)
+        64    WaveHeader5 (380 B)
+        444   wData (2*N · 8 B)
+        444 + data_size
+              note (note_size B)
+
+    We emit the minimal valid v5: no dataEUnits, no dimEUnits, no
+    dimLabels, no sIndices. The corresponding ``*Size`` counts in
+    BinHeader5 are zero, and the matching pointer fields in
+    WaveHeader5 are zero (the ``igor`` reader treats those as
+    "not present"). The ``whVersion`` field is 1, per the v5 spec
+    comment in :mod:`igor.binarywave`.
+
+    The 1-D float64 wave is dimensioned with ``nDim[0] = 2*N`` and
+    ``nDim[1..3] = 0``. ``sfA[0] = 1.0``, ``sfB[0] = 0.0`` so the X
+    value for point ``p`` is ``p`` itself, matching the v2
+    ``hsA=1.0, hsB=0.0`` convention.
+
+    See module docstring for the field-by-field table.
+    """
+    data_bytes, note, ctx = _build_ibw_payload(curve)
+    n = ctx["n"]
+    note_size = len(note)
+    bname = ctx["bname_v5"]
+
+    # BinHeader5 fields, in order (after the leading 16-bit checksum).
+    # ``*Size`` counts are all zero for our minimal v5 (no extended
+    # units, no dim labels, no string indices).
+    wfm_size = _WAVE_HEADER5_SIZE + len(data_bytes)
+
+    # WaveHeader5 fields. The nDim / sfA / sfB / dimUnits / dimEUnits /
+    # dimLabels arrays are 4-wide each; only the [0] entry is meaningful
+    # for a 1-D wave.
+    n_dim = (2 * n, 0, 0, 0)
+    sf_a = (1.0, 0.0, 0.0, 0.0)
+    sf_b = (0.0, 0.0, 0.0, 0.0)
+    dim_units = _split_bytes(b"nm\x00\x00") + _split_bytes(b"\x00\x00\x00\x00") * 3
+    dim_eunits = (0, 0, 0, 0)  # 4 pointers; 0 = "no extended units"
+    dim_labels = (0, 0, 0, 0)  # 4 pointers; 0 = "no labels"
+    wh_unused = (0,) * 16
+
+    # BinHeader5 packs the 16-bit ``checksum`` field first, then
+    # 9 native ``l`` fields. Native alignment inserts 6 bytes of
+    # padding between the ``H`` and the first ``l`` (on 64-bit
+    # hosts), making the on-disk total 128 B. We pack the bin
+    # header in one ``struct.pack`` call so the padding is added
+    # by the struct module; the checksum is filled in with a
+    # placeholder of 0 and substituted after the wave header is
+    # packed.
+    dim_eunits_sizes = (0, 0, 0, 0)  # dimEUnitsSize[0..3]
+    dim_labels_sizes = (0, 0, 0, 0)  # dimLabelsSize[0..3]
+    bin_header = struct.pack(
+        _FMT_BIN5,
+        0,  # checksum (placeholder, substituted below)
+        wfm_size,
+        0,  # formulaSize
+        note_size,
+        0,  # dataEUnitsSize
+        *dim_eunits_sizes,
+        *dim_labels_sizes,
+        0,  # sIndicesSize
+        0,  # optionsSize1
+        0,  # optionsSize2
+    )
+    if len(bin_header) != _BIN_HEADER5_SIZE:
+        raise RuntimeError(
+            f"BinHeader5 packed to {len(bin_header)} bytes; expected {_BIN_HEADER5_SIZE}"
+        )
+
+    wave_header = struct.pack(
+        _FMT_WAVE5,
+        0,  # next (pointer; 0 in standalone files)
+        0,  # creationDate
+        0,  # modDate
+        2 * n,  # npnts
+        _NT_FP64,  # type
+        0,  # dLock
+        *_split_bytes(b"\x00" * 6),  # whpad1
+        _WAVE_HEADER5_WHVERSION,  # whVersion
+        *_split_bytes(bname),  # bname
+        0,  # whpad2
+        0,  # dFolder (pointer; 0)
+        *n_dim,
+        *sf_a,
+        *sf_b,
+        *_split_bytes(b"pN\x00\x00"),  # dataUnits
+        *dim_units,
+        1,  # fsValid
+        0,  # whpad3
+        ctx["top"],  # topFullScale
+        ctx["bot"],  # botFullScale
+        0,  # dataEUnits (pointer; 0)
+        *dim_eunits,
+        *dim_labels,
+        0,  # waveNoteH (pointer; 0)
+        *wh_unused,
+        0,  # aModified
+        0,  # wModified
+        0,  # swModified
+        b"\x00",  # useBits
+        b"\x00",  # kindBits
+        0,  # formula (pointer; 0)
+        0,  # depID
+        0,  # whpad4
+        0,  # srcFldr
+        0,  # fileName (pointer; 0)
+        0,  # sIndices (pointer; 0)
+    )
+    if len(wave_header) != _WAVE_HEADER5_SIZE:
+        # Defensive: a struct-mismatch here would silently corrupt every
+        # file we write, so fail loudly in dev rather than ship broken
+        # bytes downstream.
+        raise RuntimeError(
+            f"WaveHeader5 packed to {len(wave_header)} bytes; expected {_WAVE_HEADER5_SIZE}"
+        )
+
+    # ``_compute_checksum`` sums the 16-bit values in the (bin
+    # header with placeholder checksum + wave header) buffer and
+    # returns the value that makes the total ≡ 0 (mod 2^16). The
+    # leading 2 bytes of the bin header are the checksum slot; the
+    # padding bytes (positions 2-7 on 64-bit) are part of the sum.
+    checksum = _compute_checksum(bin_header, wave_header)
+    bin_header = struct.pack("<H", checksum) + bin_header[2:]
+
+    file_bytes = (
+        struct.pack("<h", 5)  # version
+        + bin_header  # BinHeader5
+        + wave_header  # WaveHeader5
+        + data_bytes  # wData
+        + note  # note (no v5 padding)
     )
     path.write_bytes(file_bytes)

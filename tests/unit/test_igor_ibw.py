@@ -151,16 +151,164 @@ class TestRoundTrip:
             else b"afmkit=2col" in note
         )
 
-    def test_k_cantilever_override_beats_note(
+    def test_k_cantilever_from_curve_metadata_lands_in_note(
         self, tmp_path: Path, synthetic_curve: ForceCurve
     ) -> None:
-        """The function arg k_cantilever wins over the k=... in the note."""
-        p = tmp_path / "override.ibw"
-        save_ibw(synthetic_curve, p)  # writes k=0.12
+        """The ``k=`` token in the note reflects the curve's own
+        ``k_cantilever`` metadata. (The legacy v0.3 caller-arg
+        override was removed; the only way to set ``k`` on the
+        wave note is to put it in ``curve.metadata`` before the
+        call.)"""
+        # Override the curve's k_cantilever to a non-default value
+        # and confirm the note picks it up.
+        curve = ForceCurve(
+            extension=synthetic_curve.extension,
+            force=synthetic_curve.force,
+            metadata={**synthetic_curve.metadata, "k_cantilever": 0.05},
+        )
+        p = tmp_path / "ko.ibw"
+        save_ibw(curve, p)
 
-        loaded = load_ibw_batch([p], k_cantilever=0.25)
+        raw = igor.binarywave.load(str(p))
+        note = raw["wave"]["note"]
+        decoded = note.decode("utf-8", errors="replace") if isinstance(note, bytes) else str(note)
+        assert "k=0.05" in decoded
 
-        assert loaded[0].metadata.get("k_cantilever") == pytest.approx(0.25)
+
+# -- v5 round-trip ---------------------------------------------------------
+
+
+class TestV5RoundTrip:
+    """save_ibw(version=5) → load_ibw should preserve (ext, force) and
+    metadata. The v5 format is the modern Igor Pro 6.00+ layout
+    (WAVE_HEADER5 = 320 B, BIN_HEADER5 = 62 B, ``=`` byte order,
+    ``P`` → ``I`` pointer substitution) and must round-trip through
+    the same :mod:`igor.binarywave` reader the v2 path uses."""
+
+    def test_v5_round_trip_preserves_extension_and_force(
+        self, tmp_path: Path, synthetic_curve: ForceCurve
+    ) -> None:
+        p = tmp_path / "rt_v5.ibw"
+        save_ibw(synthetic_curve, p, version=5)
+
+        loaded = load_ibw(p)
+
+        np.testing.assert_allclose(loaded.extension, synthetic_curve.extension)
+        np.testing.assert_allclose(loaded.force, synthetic_curve.force)
+        assert loaded.n_points == synthetic_curve.n_points
+
+    def test_v5_round_trip_preserves_k_cantilever(
+        self, tmp_path: Path, synthetic_curve: ForceCurve
+    ) -> None:
+        p = tmp_path / "k_v5.ibw"
+        save_ibw(synthetic_curve, p, version=5)
+
+        loaded = load_ibw(p)
+
+        assert loaded.metadata.get("k_cantilever") == pytest.approx(0.12)
+
+    def test_v5_round_trip_preserves_source_file(
+        self, tmp_path: Path, synthetic_curve: ForceCurve
+    ) -> None:
+        """v5 bname is 31 chars + NUL (vs v2's 18 + NUL), so longer
+        source filenames survive in the wave name. The loader's
+        ``source_file`` metadata is the destination path's
+        filename (same convention as v2)."""
+        # Build a curve with a long source filename to exercise the
+        # 31-char bname space.
+        long_stem = "long_curve_name_abcdefghij"  # 26 chars
+        curve = ForceCurve(
+            extension=synthetic_curve.extension,
+            force=synthetic_curve.force,
+            metadata={**synthetic_curve.metadata, "source_file": long_stem + ".ibw"},
+        )
+        p = tmp_path / "sf_v5.ibw"
+        save_ibw(curve, p, version=5)
+
+        loaded = load_ibw(p)
+        assert loaded.metadata.get("k_cantilever") == pytest.approx(0.12)
+        # source_file in the loaded metadata is the *destination*
+        # path's filename (same convention as v2). The wave's
+        # bname (which is the source filename stem) is verified
+        # via the raw igor read below.
+        assert loaded.metadata.get("source_file") == "sf_v5.ibw"
+
+        # The bname (31-char space) does hold the full long stem.
+        raw = igor.binarywave.load(str(p))
+        wh = raw["wave"]["wave_header"]
+        bname = bytes(wh["bname"]).rstrip(b"\x00")
+        assert bname == long_stem.encode()
+
+    def test_v5_marker_in_note(self, tmp_path: Path, synthetic_curve: ForceCurve) -> None:
+        """v5 files carry the same 'afmkit=2col' marker as v2 so
+        :func:`load_ibw` can de-interleave the (ext, force)
+        pairs."""
+        p = tmp_path / "m_v5.ibw"
+        save_ibw(synthetic_curve, p, version=5)
+
+        raw = igor.binarywave.load(str(p))
+        note = raw["wave"]["note"]
+        decoded = note.decode("utf-8", errors="replace") if isinstance(note, bytes) else str(note)
+        assert "afmkit=2col" in decoded
+
+    def test_v5_wave_header_fields(self, tmp_path: Path, synthetic_curve: ForceCurve) -> None:
+        """The v5 wave header carries the fields afmkit relies on
+        for downstream analysis: ``type`` = NT_FP64, ``bname``
+        matching the source file, ``dataUnits`` = "pN",
+        ``dimUnits[0]`` = "nm", and ``sfA[0] = 1.0`` / ``sfB[0] = 0.0``
+        for the 1-D (ext, force) index."""
+        p = tmp_path / "wh_v5.ibw"
+        save_ibw(synthetic_curve, p, version=5)
+
+        raw = igor.binarywave.load(str(p))
+        wh = raw["wave"]["wave_header"]
+
+        assert int(wh["type"]) == 4  # NT_FP64
+        assert int(wh["npnts"]) == 2 * synthetic_curve.n_points
+        assert int(wh["fsValid"]) == 1
+        # bname is a 32-byte array in v5; convert to bytes for inspection.
+        bname = bytes(wh["bname"]).rstrip(b"\x00")
+        # The writer uses ``Path(source).stem`` for the bname, so the
+        # .ibw extension is dropped. The synthetic_curve fixture's
+        # source_file is "synthetic_curve.ibw" → bname is
+        # "synthetic_curve".
+        assert bname == b"synthetic_curve"
+        # dataUnits is a 4-byte array.
+        data_units = bytes(wh["dataUnits"]).rstrip(b"\x00")
+        assert data_units == b"pN"
+        # dimUnits[0] (per-dim 4-byte array).
+        dim_units_0 = bytes(wh["dimUnits"][0]).rstrip(b"\x00")
+        assert dim_units_0 == b"nm"
+        # sfA[0] = 1.0, sfB[0] = 0.0 so X for point p is p itself.
+        assert float(wh["sfA"][0]) == pytest.approx(1.0)
+        assert float(wh["sfB"][0]) == pytest.approx(0.0)
+
+    def test_v5_v2_produce_equivalent_data(
+        self, tmp_path: Path, synthetic_curve: ForceCurve
+    ) -> None:
+        """The two versions encode the same logical data; only the
+        on-disk layout differs. After reading back, the v2 and v5
+        files should yield curves with the same (ext, force) and
+        metadata."""
+        p_v2 = tmp_path / "v2.ibw"
+        p_v5 = tmp_path / "v5.ibw"
+        save_ibw(synthetic_curve, p_v2, version=2)
+        save_ibw(synthetic_curve, p_v5, version=5)
+
+        loaded_v2 = load_ibw(p_v2)
+        loaded_v5 = load_ibw(p_v5)
+
+        np.testing.assert_allclose(loaded_v2.extension, loaded_v5.extension)
+        np.testing.assert_allclose(loaded_v2.force, loaded_v5.force)
+        assert loaded_v2.metadata.get("k_cantilever") == loaded_v5.metadata.get("k_cantilever")
+
+    def test_save_ibw_invalid_version_raises(
+        self, tmp_path: Path, synthetic_curve: ForceCurve
+    ) -> None:
+        with pytest.raises(ValueError, match="version must be 2 or 5"):
+            save_ibw(synthetic_curve, tmp_path / "x.ibw", version=3)
+        with pytest.raises(ValueError, match="version must be 2 or 5"):
+            save_ibw(synthetic_curve, tmp_path / "x.ibw", version=0)
 
 
 # -- Batch load + direction pairing --------------------------------------
