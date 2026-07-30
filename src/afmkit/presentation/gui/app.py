@@ -55,10 +55,13 @@ try:
 except ImportError as _exc:  # pragma: no cover - exercised only when textual is missing
     _TEXTUAL_IMPORT_ERROR: ImportError | None = _exc
 
-    # mypy-only aliases. The runtime types only matter when textual is
-    # actually importable (which is also the only time BINDINGS is
-    # evaluated) — at runtime the import error exits before that.
-    BindingType = Binding = object  # type: ignore[assignment,misc]
+    # Stubs so the class bodies below can still parse. At runtime the
+    # `_TEXTUAL_IMPORT_ERROR is not None` guard short-circuits before
+    # any of these names are referenced, so the placeholder values
+    # never get used. ``Any`` makes mypy accept the conditional
+    # redefinition without forcing the runtime types to be importable.
+    BindingType: Any = object  # type: ignore[no-redef]
+    Binding: Any = object  # type: ignore[no-redef]
 else:
     _TEXTUAL_IMPORT_ERROR = None
 
