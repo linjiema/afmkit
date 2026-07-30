@@ -54,7 +54,11 @@ try:
     from textual.widgets import DataTable, Footer, Header, Input, Static
 except ImportError as _exc:  # pragma: no cover - exercised only when textual is missing
     _TEXTUAL_IMPORT_ERROR: ImportError | None = _exc
-    BindingType = object  # type: ignore[misc]  # placeholder for mypy
+
+    # mypy-only aliases. The runtime types only matter when textual is
+    # actually importable (which is also the only time BINDINGS is
+    # evaluated) — at runtime the import error exits before that.
+    BindingType = Binding = object  # type: ignore[assignment,misc]
 else:
     _TEXTUAL_IMPORT_ERROR = None
 
