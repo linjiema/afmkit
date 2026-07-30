@@ -69,9 +69,11 @@ io = [
 parquet = [
     "pyarrow>=14",
 ]
-# Legacy Igor Pro binary wave support.
+# Legacy Igor Pro binary wave support. The PyPI release is at 0.3
+# (the 0.4 series exists in the [dev] extra aspirationally but isn't
+# on PyPI yet). Pin to the version that actually installs.
 igor = [
-    "igor>=0.4",
+    "igor>=0.3",
 ]
 # Matlab .mat round-trip (uses hdf5 backend for v7.3).
 matlab = [
@@ -135,7 +137,11 @@ dev = [
     "textual>=0.50",
     # The Igor .ibw reader delegates to the `igor` PyPI package; the
     # dev test matrix runs test_igor_ibw.py on a fresh install.
-    "igor>=0.4",
+    # Note: the latest release on PyPI is 0.3 (the 0.4 series
+    # mentioned in the [igor] extra is aspirational; the upstream
+    # save() is still NotImplementedError there too). Pin to >=0.3
+    # to match the version that's actually installable.
+    "igor>=0.3",
 ]
 
 [project.urls]
