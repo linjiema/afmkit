@@ -16,25 +16,49 @@ repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.4.10
     hooks:
+      # ``--fix`` would auto-rewrite on the developer's machine but
+      # we want CI to fail loudly if anything needs formatting.
+      # Local devs can run ``ruff format`` manually before pushing.
       - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.10.1
+    # Pin to the same mypy version CI uses (see ``.github/workflows/ci.yml``)
+    # so the strict-mode check behaves identically locally and in CI.
+    # mypy 2.3 is the first 2.x line on the mirrors-mypy pre-commit tag
+    # list that tolerates the untyped ``pluggy.HookimplMarker`` decorator
+    # on the ``@register_loader`` / ``@register_model`` / etc. helpers
+    # in ``src/afmkit/plugins.py`` (the 1.x line flagged them as
+    # ``[misc] Untyped decorator``, which is a false positive — the
+    # decorator is dynamic by design).
+    rev: v2.3.0
     hooks:
       - id: mypy
         files: ^src/
         additional_dependencies:
           - pydantic>=2.5
-          - numpy
+          # numpy<2.4 mirrors the project ``dependencies`` pin. numpy 2.5+
+          # ships type stubs that use PEP 696 (TypeVar-default) and PEP 695
+          # (``type`` statement) syntax; the version matrix on the pre-commit
+          # side cannot parse them (the error surfaces as
+          # ``Type statement is only supported in Python 3.12 and greater``
+          # even on a 3.12/3.13/3.14 interpreter because the parsing path
+          # for these is gated by mypy's own PEP 696 / 695 backports, not
+          # by the host Python). Keeping the pin here means the pre-commit
+          # env and the runtime ``pip install`` see the same numpy.
+          - numpy>=1.26,<2.4
+          # The pre-commit env does not auto-install the project's
+          # ``[dev]`` extra (or its transitive ``pluggy``), so we list the
+          # runtime modules the source code imports explicitly. ``rich``
+          # submodules ship inline type hints; ``typer`` ships its own
+          # ``py.typed``; ``pyarrow`` ships ``py.typed`` and silences the
+          # ``import pyarrow`` strict-mode complaint in
+          # ``src/afmkit/io/exporters.py``.
+          - pluggy
+          - typer
+          - rich
+          - pyarrow
           - xarray
           - lmfit
           - types-tqdm
         args: [--strict, --no-incremental]
-
-  - repo: https://github.com/asottile/blacken-docs
-    rev: 1.16.0
-    hooks:
-      - id: blacken-docs
-        additional_dependencies: [black==24.4.2]
