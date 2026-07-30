@@ -61,6 +61,7 @@ from typing import TYPE_CHECKING
 
 from afmkit.models.base import PolymerModel
 from afmkit.models.ewlc import EWLCModel
+from afmkit.models.fjc import FJCModel
 from afmkit.models.wlc import WLCModel
 
 if TYPE_CHECKING:
@@ -71,6 +72,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "EWLCModel",
+    "FJCModel",
     "MODEL_REGISTRY",
     "PolymerModel",
     "WLCModel",
@@ -100,6 +102,7 @@ MODEL_REGISTRY: dict[str, type[PolymerModel]] = {
     # values.
     "wlc": WLCModel,  # type: ignore[dict-item]
     "ewlc": EWLCModel,  # type: ignore[dict-item]
+    "fjc": FJCModel,  # type: ignore[dict-item]
 }
 
 
