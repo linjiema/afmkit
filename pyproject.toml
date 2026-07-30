@@ -143,6 +143,12 @@ afmkit = "afmkit.presentation.cli:app"
 # intentionally empty so third-party packages can be the only contributors.
 
 [project.entry-points."afmkit.models"]
+# FJC is the first v0.3 plugin entry. pluggy auto-discovers this
+# at afmkit.plugins.PM time. The in-tree MODEL_REGISTRY is kept in
+# sync by the explicit "fjc": FJCModel entry above so that
+# `from afmkit.models import get_model("fjc")` works without
+# requiring the entry-point mechanism to fire.
+fjc = "afmkit.models.fjc:FJCModel"
 
 # =============================================================================
 # Hatchling build configuration
