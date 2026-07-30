@@ -569,6 +569,34 @@ def export(
     )
 
 
+# -- gui ------------------------------------------------------------------
+
+
+@app.command()
+def gui() -> None:
+    """Launch the afmkit TUI.
+
+    The interactive terminal UI is a Textual app that runs over SSH
+    and does not need an X server. It is shipped as the optional
+    ``[gui]`` extra so the rest of afmkit stays usable without the
+    TUI dependency; if Textual is not installed, this command
+    exits with a clear install hint.
+    """
+    try:
+        from textual.app import App  # noqa: F401  (probe)
+    except ImportError as exc:
+        _abort_user(
+            "The afmkit TUI requires the [gui] extra (Textual). "
+            "Install it with:  pip install 'afmkit[gui]'  "
+            f"(import error: {exc})"
+        )
+        return  # unreachable — _abort_user raises typer.Exit
+
+    from afmkit.presentation.gui.app import AFMkitApp
+
+    AFMkitApp().run()
+
+
 # -- Self-check -----------------------------------------------------------
 
 
