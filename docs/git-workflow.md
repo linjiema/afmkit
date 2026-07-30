@@ -5,6 +5,22 @@
 > rewriting history would cause more pain than the broken process
 > caused. **Future work uses this workflow.**
 
+## When you need a PR
+
+The PR is the **review gate**, not a status symbol. Use it where
+review actually adds value, skip it where the gates already do the
+job.
+
+| Move | PR required? | Why |
+|---|---|---|
+| `feature/*` / `fix/*` / `chore/*` → `develop` | **No** (default). Fast-forward or merge-commit directly. | Local gates (ruff + mypy + pytest) + ci.yml (after PR #3) already gate the merge. Opening a PR for self-review is ceremony. |
+| Big / cross-module / multi-commit change → `develop` | **Yes** (recommended). | When a change touches many files or many commits, the PR's diff view and "How to verify" checklist earn their keep. |
+| `release/vX.Y.Z` → `main` | **Yes** (always). | The release paperwork — CHANGELOG, version bump, README sync — is exactly the work a PR review should catch. |
+| `main` hotfix (cut off `main`, not `develop`) | **Yes** (always, non-squash). | Hotfixes are an audit-trail event. The non-squash merge commit on `main` is the trail. |
+
+If in doubt, open the PR. The cost of a 30-second PR is much
+smaller than the cost of a regression that landed direct.
+
 ## Branches
 
 We use a simplified Git Flow with three long-lived branches and
@@ -13,16 +29,36 @@ short-lived feature / fix / chore branches.
 | Branch | Lifetime | Purpose | Who can push |
 |---|---|---|---|
 | `main` | permanent | Released versions only. Every commit is either a `chore(release): cut vX.Y.Z` or a `fix:` hotfix. Tagged on every release. | Lead, with a green CI on the most recent commit. |
-| `develop` | permanent | Daily integration. Feature / fix / chore branches land here via PR. Tagged on every release. CI on every commit. | Lead, after at least one review approval. |
+| `develop` | permanent | Daily integration. Feature / fix / chore branches land here (direct fast-forward by default, PR for non-trivial changes). Tagged on every release. CI on every commit. | Lead, after local gates + CI are green. |
 | `feature/*`, `fix/*`, `chore/*` | short-lived (deleted after merge) | One branch per logical change. Named `feature/peak-review`, `fix/igor-pin`, `chore/update-changelog`, etc. | Coder agents + Lead, on their own work. |
 
-The Coder agents and the Lead push feature / fix / chore branches
-directly to `origin` so the orchestrator cron can see them. The
-Lead opens a PR from the feature branch to `develop` once the
-local gates (ruff + mypy + pytest) are green and the
-post-commit CI is green. The Lead merges the PR (squash-merge by
-default) once `develop`'s CI is green; fast-forwarding `main` to
-`develop` and tagging is the next step.
+### feature / fix / chore → develop (default)
+
+1. Branch off `develop`: `git checkout -b feature/my-change develop`.
+2. Implement + commit (Conventional Commits, one logical change
+   per commit).
+3. Push the branch: `git push -u origin feature/my-change`.
+4. Wait for the post-commit CI on the branch to turn green
+   (pushes to non-`main` branches trigger ci.yml after PR #3).
+5. Fast-forward `develop`: `git checkout develop && git merge
+   --ff-only feature/my-change && git push origin develop`.
+
+The merge is a clean fast-forward and `git log` on `develop`
+reads as a linear timeline of the feature's individual commits.
+
+### feature / fix / chore → develop (when the change is big)
+
+If the change touches many files / many commits / public API
+shape, open a PR. The PR is the place where:
+
+  - the diff is reviewable side-by-side
+  - the "How to verify" checklist gets ticked
+  - the change history on `develop` is one squash-merge commit,
+    not N individual feature commits
+
+This is the same flow we used for v0.4 #1 (CSV / Markdown
+plumbing) and v0.4 #2 (matplotlib plot panel) — those PRs
+exercised the PR-path side of this workflow.
 
 ## Commit messages
 
@@ -54,6 +90,9 @@ the original repo settings; not a placeholder.)
 
 ## Pull requests
 
+When you do open a PR (release / hotfix / big change), the format
+is:
+
 - **Title**: matches the lead commit's subject line (Conventional
   Commit format). e.g. `feat(io): add Igor .ibw read + write`.
 - **Body** (one short paragraph + the standard checklist):
@@ -76,9 +115,14 @@ the original repo settings; not a placeholder.)
   work, the **Lead** is the reviewer. For Lead work on the docs
   or release, the user reviews directly.
 
-- **Merge**: squash-merge by default. The squash commit inherits
-  the PR title and body, so `git log main` reads as a clean
-  release-history timeline.
+- **Merge**:
+  - `feature/*|fix/*|chore/*` → `develop`: **squash-merge** by
+    default. The squash commit inherits the PR title and body,
+    so `git log develop` reads as a clean release-history
+    timeline.
+  - `release/vX.Y.Z` → `main` and any `fix/*` hotfix → `main`:
+    **non-squash merge commit**. The merge commit is the audit
+    trail; squashing loses it.
 
 ## Hotfixes
 
@@ -93,7 +137,8 @@ too. The back-merge is `git checkout develop && git merge
 
 Releases follow `docs/release-checklist.md`. The flow is:
 
-1. Develop on `develop` (multiple feature / fix / chore PRs).
+1. Develop on `develop` (multiple feature / fix / chore
+   fast-forwards, with PRs for the non-trivial ones).
 2. Cut a `release/vX.Y.Z` branch off `develop` for the final
    paperwork (CHANGELOG, version bump, README sync).
 3. Open a PR `release/vX.Y.Z` → `main`. Merge with a non-squash
@@ -109,12 +154,17 @@ toward the next release.
 ## Anti-patterns
 
 - **Direct push to `main`** — never. Always go through a PR
-  unless it's a tag push (`git push origin vX.Y.Z`).
-- **Direct push to `develop`** without a PR — fine for tiny
-  chore commits (typo, doc nit, version bump) but for any
-  non-trivial change open a PR so the work is reviewable.
-- **Squash-merging a hotfix** — the merge commit is the audit
-  trail; squashing loses it.
+  unless it's a tag push (`git push origin vX.Y.Z`). The only
+  exception is the `chore(release): cut vX.Y.Z` commit itself,
+  which is the release PR's merge commit (not a direct push).
+- **Direct push to `develop`** without a PR — fine for any
+  change where local gates + CI are green, including
+  multi-commit features (the merge is a clean fast-forward
+  on `develop`'s linear history). Reserve PRs for non-trivial
+  changes, releases, and hotfixes.
+- **Squash-merging a hotfix or a release PR** — the merge
+  commit is the audit trail; squashing loses it. Use a
+  non-squash merge commit for these.
 - **Force-push to any shared branch** — never. Rebase locally
   before pushing if you need a clean history; the shared branch
   history is sacred.
