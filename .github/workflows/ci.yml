@@ -1,10 +1,17 @@
 name: CI
 
+# Fire on push and PR to BOTH `main` (release PRs / hotfix merges)
+# and `develop` (daily integration). The previous `[main]` only config
+# meant PRs targeting `develop` (the new workflow's daily integration
+# branch, per `docs/git-workflow.md`) had no CI feedback at all, so
+# the release-checklist's "CI gates" step was a no-op for every PR
+# except the final release PR. This is the prerequisite for the new
+# workflow to actually gate merges.
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 # Cancel in-progress runs of the same ref.
 concurrency:
