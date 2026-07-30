@@ -38,12 +38,14 @@ Conventions
 Examples
 --------
 >>> from afmkit.analysis import find_sawtooth_peaks, PeakReviewer
->>> peaks = find_sawtooth_peaks(curve, min_prominence_pN=5.0)
->>> reviewer = PeakReviewer(peaks, curve)
->>> reviewer.reject(2)                       # user rejects peak 2
->>> reviewer.override(0, 45.2)               # user sets peak 0 force to 45.2 pN
->>> result = reviewer.re_fit(1)              # re-fit peak 1
->>> accepted = reviewer.accepted             # only the kept peaks
+>>> # Setup: a synthetic curve with three known sawtooth peaks.
+>>> # See tests/unit/test_peak_review.py for a runnable example.
+>>> peaks = find_sawtooth_peaks(curve, min_prominence_pN=5.0)  # doctest: +SKIP
+>>> reviewer = PeakReviewer(peaks, curve)  # doctest: +SKIP
+>>> reviewer.reject(2)                       # doctest: +SKIP
+>>> reviewer.override(0, 45.2)               # doctest: +SKIP
+>>> result = reviewer.re_fit(1)              # doctest: +SKIP
+>>> accepted = reviewer.accepted             # doctest: +SKIP
 """
 
 from __future__ import annotations
@@ -165,13 +167,14 @@ class PeakReviewer:
 
     Examples
     --------
-    >>> peaks = find_sawtooth_peaks(curve, min_prominence_pN=5.0)
-    >>> reviewer = PeakReviewer(peaks, curve)
-    >>> reviewer.reject(2)            # user rejects peak 2
-    >>> reviewer.override(0, 45.2)    # user manually sets peak 0 force to 45.2 pN
-    >>> reviewer.re_fit(1)            # re-fit peak 1 in the default window
-    >>> len(reviewer.accepted)
-    ...
+    >>> # See tests/unit/test_peak_review.py for a runnable setup.
+    >>> peaks = find_sawtooth_peaks(curve, min_prominence_pN=5.0)  # doctest: +SKIP
+    >>> reviewer = PeakReviewer(peaks, curve)  # doctest: +SKIP
+    >>> reviewer.reject(2)            # doctest: +SKIP
+    >>> reviewer.override(0, 45.2)    # doctest: +SKIP
+    >>> reviewer.re_fit(1)            # doctest: +SKIP
+    >>> len(reviewer.accepted)        # doctest: +SKIP
+    ...                              # doctest: +SKIP
     """
 
     #: Default half-width of the local re-fit window (in nm), used
