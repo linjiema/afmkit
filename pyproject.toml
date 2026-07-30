@@ -81,6 +81,13 @@ matlab = [
 plot = [
     "matplotlib>=3.8",
 ]
+# Interactive terminal UI (TUI) — a Textual app that runs over SSH
+# without an X server. See ``afmkit.presentation.gui.app.AFMkitApp``.
+# The minimum version is intentionally loose to allow whichever
+# Textual release is current in the lab's pip index.
+gui = [
+    "textual>=0.50",
+]
 # Documentation build.
 docs = [
     "mkdocs>=1.5",
@@ -91,7 +98,7 @@ docs = [
 ]
 # Convenience: install everything an end-user might want.
 all = [
-    "afmkit[io,parquet,igor,matlab,plot]",
+    "afmkit[io,parquet,igor,matlab,plot,gui]",
 ]
 # Developer / CI dependencies.
 dev = [
@@ -259,6 +266,15 @@ ignore_missing_imports = true
 # so mypy falls back to dynamic typing for the small surface area the
 # fitting layer touches (``Model``, ``Parameters``, ``ModelResult``).
 module = "lmfit.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Textual is an optional [gui] extra; it ships partial type hints but
+# we don't ship stubs for the small surface area the TUI uses
+# (App, ModalScreen, DataTable, Input, Footer, Header, Container,
+# Vertical). The runtime check `pytest.importorskip("textual")`
+# keeps it out of the default test path anyway.
+module = "textual.*"
 ignore_missing_imports = true
 
 # =============================================================================
