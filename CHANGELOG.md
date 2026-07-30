@@ -11,6 +11,23 @@ The v0.3 retrospective process fix is in this section; it lands on
 v0.3.1 paperwork-pass release). New feature work will pile on top; the
 v0.4 tag is the next cut.
 
+### Added
+
+- **Peak review state plumbed through `to_csv_fits` and `to_markdown`**.
+  The first v0.4 task. `to_csv_fits(fits, path, *, reviewers=None)` and
+  `to_markdown(batch, fits, path, *, reviewers=None)` now accept a
+  `{curve_index: PeakReviewer}` mapping. When `reviewers` is provided,
+  the CSV output switches to one row per (curve, peak) with the fit
+  columns repeated and the per-peak columns appended (`curve_index`,
+  `peak_index`, `extension_nm`, `force_pN`, `manual_force_pN`,
+  `accepted`, `confidence`, `prominence_pN`, `width_points`,
+  `height_drop_pN`, `note`). The Markdown output gets a new
+  `## Peak review` section after `## Fit results`, with one row per
+  peak. The legacy one-row-per-fit shape is preserved when `reviewers`
+  is `None` (the default), so v0.1 → v0.3 callers are unaffected.
+  Curves with a reviewer but zero peaks get a single empty row; curves
+  without a reviewer entry still get a row so every fit is represented.
+
 ### Process (v0.3 retrospective)
 
 Two process regressions bit the v0.1 → v0.2 → v0.3 cycle: (1) every
@@ -42,9 +59,6 @@ history would cause more pain than the broken process caused.
 
 Carried over from v0.3's Known limitations, in priority order:
 
-- `PeakReviewer.to_dict()` exists but `to_csv_fits` / `to_markdown`
-  don't yet plumb the per-peak accept / reject / manual_force state
-  into the per-fit CSV. The first v0.4 task.
 - The plot panel currently shows a textual summary
   ("plot: curve 3 + 5 reviewed peak(s) + WLC fit p=0.41 nm") rather
   than rendering the actual matplotlib image into the panel. A real
