@@ -64,27 +64,35 @@ def test_afmkit_app_is_textual_app_subclass() -> None:
     assert issubclass(AFMkitApp, App)
 
 
-def test_bindings_cover_open_fit_export_quit() -> None:
-    """The four documented keybindings are registered.
+def test_bindings_cover_v0_3_surface() -> None:
+    """The documented v0.3 keybindings are registered.
 
-    The keys ``o``, ``f``, ``e``, ``q`` are the entire user-facing
-    surface of the v0.2 TUI; missing any of them is a regression
-    that would block the documented workflow.
+    v0.2 had four (``o``, ``f``, ``e``, ``q``); v0.3 adds two more
+    for the peak-review and plot-panel features (``P`` shift-p for
+    the plot, ``p`` for the peak-review toggle). Missing any of
+    these is a regression that would block the documented workflow.
     """
     binding_keys = {b.key for b in AFMkitApp.BINDINGS}
-    assert binding_keys == {"o", "f", "e", "q"}
+    assert binding_keys == {"o", "f", "e", "q", "P", "p"}
 
 
 def test_bindings_actions_resolve_to_methods() -> None:
     """Each binding's action string maps to a real ``action_*`` method.
 
     Textual resolves ``Binding("o", "open_dir", ...)`` to
-    ``self.action_open_dir()`` at dispatch time. The four action
-    names here must each be present, and three of them must have
-    matching methods on :class:`AFMkitApp`. (``quit`` is a
-    built-in Textual action, so no matching method is required.)
+    ``self.action_open_dir()`` at dispatch time. The v0.3 action
+    names here must each be present, and most must have matching
+    methods on :class:`AFMkitApp`. (``quit`` is a built-in Textual
+    action, so no matching method is required.)
     """
-    expected_actions = {"open_dir", "fit_selected", "export_csv", "quit"}
+    expected_actions = {
+        "open_dir",
+        "fit_selected",
+        "export_csv",
+        "toggle_plot",
+        "toggle_review",
+        "quit",
+    }
     found_actions = {b.action for b in AFMkitApp.BINDINGS}
     assert expected_actions <= found_actions
 

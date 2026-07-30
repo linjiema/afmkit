@@ -123,6 +123,19 @@ dev = [
     # the CI test matrix has the engine available and mypy --strict
     # can resolve the `import pyarrow` in afmkit.io.exporters.
     "pyarrow>=14",
+    # matplotlib + pillow are the deps of the v0.3 plot widget
+    # (afmkit.presentation.gui.plot). Install here so the CI test
+    # matrix exercises test_plot.py end-to-end and mypy --strict can
+    # resolve `import matplotlib` / `import PIL` in plot.py.
+    "matplotlib>=3.8",
+    "pillow>=10.0",
+    # textual is the v0.2 / v0.3 TUI runtime; the v0.3 work wired
+    # AFMkitApp + plot + peak-review together and the test matrix
+    # needs the runtime to be importable.
+    "textual>=0.50",
+    # The Igor .ibw reader delegates to the `igor` PyPI package; the
+    # dev test matrix runs test_igor_ibw.py on a fresh install.
+    "igor>=0.4",
 ]
 
 [project.urls]
@@ -288,6 +301,14 @@ ignore_missing_imports = true
 module = "textual.*"
 ignore_missing_imports = true
 disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+# matplotlib + pillow ship without type stubs in our test matrix.
+# The v0.3 plot widget only uses matplotlib.pyplot.Agg and Pillow's
+# Image / ImageDraw — the surface is small enough that dynamic
+# typing is fine.
+module = ["matplotlib.*", "matplotlib.pyplot", "PIL.*"]
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 # The TUI is implemented entirely in terms of textual runtime classes
