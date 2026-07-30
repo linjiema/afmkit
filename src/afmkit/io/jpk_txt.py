@@ -7,10 +7,10 @@ Nanowizzard / ForceRobot AFM software. The conversion logic is
 
 .. code-block:: python
 
-    force_pN      = -deflection_N * 1e12
-    extension_nm  = piezo_m * 1e9 - force_pN / k_cantilever
-    force_pN     -= force_pN[:200].mean()      # mean of first 200 pts
-    extension_nm -= extension_nm[-1]           # last point
+    force_pN = -deflection_N * 1e12
+    extension_nm = piezo_m * 1e9 - force_pN / k_cantilever
+    force_pN -= force_pN[:200].mean()  # mean of first 200 pts
+    extension_nm -= extension_nm[-1]  # last point
 
 File layout
 -----------

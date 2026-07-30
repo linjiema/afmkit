@@ -191,6 +191,7 @@ extension points:
 from afmkit.models import register_model
 from afmkit.models.base import PolymerModel
 
+
 @register_model("my_custom_model")
 class MyCustomModel:
     # implements the PolymerModel protocol
