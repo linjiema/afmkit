@@ -104,6 +104,26 @@ v0.4 tag is the next cut.
   `.github/ISSUE_TEMPLATE/bug_report.md` are swept up here so
   the first CI run starts green.
 
+### Fixed
+
+- **Missing runtime dep: `pluggy>=1.5` is now in
+  `[project] dependencies`**. `src/afmkit/plugins.py` does
+  `import pluggy` at module load (the `pluggy.HookspecMarker`
+  / `HookimplMarker` decorators power the
+  `@register_loader` / `@register_model` /
+  `@register_baseline` / `@register_fitter` entry points).
+  Before this fix, `pluggy` was only present as a transitive
+  dep of `pytest`, so a bare `pip install afmkit` (no
+  `[dev]` / `[test]` extras) could resolve to an environment
+  where `import afmkit` would fail at the `import pluggy`
+  line the first time the plugin manager was initialised.
+  CI was unaffected because it installs `[dev]` (which
+  transitively pulls `pluggy` via `pytest`), but the missing
+  declaration was a footgun for end users. The pre-commit
+  hook still lists `pluggy` in `additional_dependencies`
+  because pre-commit does not auto-install the project's
+  runtime dependencies.
+
 ### Process (v0.3 retrospective)
 
 Two process regressions bit the v0.1 → v0.2 → v0.3 cycle: (1) every

@@ -49,6 +49,14 @@ dependencies = [
     "pandas>=2.1",
     "lmfit>=1.3",
     "pydantic>=2.5",
+    # pluggy is the plugin hook manager that ``src/afmkit.plugins``
+    # imports unconditionally. It used to be pulled in only as a
+    # transitive dep of pytest, which meant a bare ``pip install
+    # afmkit`` (no dev / test extras) would still ``import afmkit``
+    # but a ``import pluggy`` at module load would have to come
+    # from somewhere else. Make it explicit so the runtime
+    # install path is self-contained.
+    "pluggy>=1.5",
     "typer>=0.12",
     "rich>=13.7",
     "loguru>=0.7",
