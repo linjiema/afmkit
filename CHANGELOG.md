@@ -73,6 +73,37 @@ v0.4 tag is the next cut.
   ``release-checklist.md``) are on ``develop`` and will land on
   the site at the next push to ``main`` (the v0.4 release).
 
+- **`pre-commit` enforced in CI**. The `.pre-commit-config.yaml`
+  hooks (general pre-commit-hooks + ruff lint/format + mypy
+  `--strict`) now run on every push and PR to `main` and
+  `develop` via a new `pre-commit` job in `.github/workflows/ci.yml`
+  using `pre-commit/action@v3.0.1`. The build job now depends on
+  the pre-commit job too, so a hook failure blocks a release
+  build. The pre-commit config was tightened at the same time:
+  the `blacken-docs` hook was removed (it conflicts with `ruff
+  format`), the `mypy` hook is bumped from v1.10.1 to v2.3.0
+  (the same version CI uses — 1.x flagged the untyped
+  `pluggy.HookimplMarker` decorator on every `@register_loader`
+  / `@register_model` helper in `src/afmkit/plugins.py` as a
+  `[misc] Untyped decorator` false positive, while 2.3.0
+  tolerates it), `numpy` is pinned to `>=1.26,<2.4` in the
+  pre-commit `additional_dependencies` (mirrors the project
+  `dependencies` pin; numpy 2.5+ stubs use PEP 696
+  TypeVar-default and PEP 695 `type` statement syntax that the
+  pre-commit mypy cannot parse, which surfaces as
+  `Type statement is only supported in Python 3.12 and greater`
+  even on 3.12+ interpreters), and `pluggy`, `typer`, `rich`,
+  and `pyarrow` are added to `additional_dependencies` because
+  the pre-commit env does not auto-install the project `[dev]`
+  extra (CI gets them transitively through `pytest` /
+  `pip install -e ".[dev]"`). `ruff`'s `--fix` flag was removed
+  so a dirty push fails loud in CI instead of getting silently
+  rewritten. A handful of pre-existing formatting drifts in
+  `docs/migration.md`, `docs/v0.3-roadmap.md`, `README.md`,
+  `src/afmkit/io/jpk_txt.py`, and
+  `.github/ISSUE_TEMPLATE/bug_report.md` are swept up here so
+  the first CI run starts green.
+
 ### Process (v0.3 retrospective)
 
 Two process regressions bit the v0.1 → v0.2 → v0.3 cycle: (1) every
@@ -109,7 +140,6 @@ Carried over from v0.3's Known limitations, in priority order:
   ``release-checklist.md``) are not on ``main`` yet — they live
   on ``develop`` from PR #1. They will appear on the site after
   the next push to ``main`` (the v0.4 release).
-- `pre-commit` not yet enforced in CI.
 
 ## [0.3.0] — 2026-07-30
 
