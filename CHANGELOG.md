@@ -6,8 +6,68 @@ and the format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1
 
 ## [Unreleased]
 
-Nothing yet. The next batch will land with v0.3 (peak-pick interactive
-review, FJC plugin, GUI plot overlay).
+Nothing yet. The next batch will land with v0.4 (or whatever — see
+v0.3's "Known limitations" for the candidates).
+
+## [0.3.0] — 2026-07-30
+
+Four pieces, plus a TUI integration, plus a documentation site. The
+big v0.3 story is that **the TUI is now actually usable for real
+analysis** — you can open a directory of JPK files, fit WLC / eWLC
+/ FJC, interactively review the auto-detected peaks (accept /
+reject / override / re-fit), and see the curve + peaks + fit in a
+matplotlib panel.
+
+**Install**
+
+```bash
+pip install "afmkit @ git+https://github.com/linjiema/afmkit.git@v0.3.0"
+```
+
+Optional extras:
+
+```bash
+pip install "afmkit[igor] @ ..."      # Igor .ibw round-trip
+pip install "afmkit[gui] @ ..."      # Textual TUI
+pip install "afmkit[plot] @ ..."     # matplotlib panel inside the TUI
+pip install "afmkit[parquet] @ ..."  # pyarrow Parquet export
+```
+
+### Added
+
+- **Peak-review data model** — `afmkit.analysis.peak_review.PeakReviewer` and `ReviewedPeak`. The reviewer wraps a list of auto-detected `Peak`s and lets the caller accept / reject / override the force / re-fit a single peak in a local window / attach a free-form note. `to_dict()` exports the reviewer state to the same column-block shape as `to_csv_fits`, so the per-peak accept / reject / manual_force makes it into the output.
+
+- **Matplotlib plot widget** — `afmkit.presentation.gui.plot.ForceExtensionPlot`. A Textual widget that renders a force-extension curve with optional peak markers and WLC fit overlay via the matplotlib Agg backend. Used inside the TUI (see below) and reusable by any future Textual surface.
+
+- **FJC model + pluggy entry-point demo** — `afmkit.models.FJCModel`, the classical Freely Jointed Chain with the Padé [2,2] inverse Langevin approximation (b Kuhn length, Lc contour length). Registered both in `MODEL_REGISTRY["fjc"]` and in `pyproject.toml`'s `[project.entry-points."afmkit.models"]` block — the first time a third-party-style entry point has actually been wired in afmkit.
+
+- **TUI integration** — `AFMkitApp` now has:
+  - `P` (shift-p) — toggle the matplotlib plot panel
+  - `p` — enter peak-review mode for the highlighted curve.
+    Inside review mode: `j` / `k` navigate, `a` accept, `r` reject,
+    `o` override force (asks via a small input), `R` re-fit the
+    highlighted peak in a local window, `escape` exit
+  - The fit result from `f` is now stashed in `_last_fit` and
+    overlaid on the plot panel when `P` is on
+  - The peak-review table and plot panel are CSS-toggled via a
+    `hidden` class; the DOM stays put so toggling is instant
+
+- **mkdocs + GitHub Pages deploy** — `mkdocs build --strict` is part of the `ci` workflow's optional `Docs` job; on every push to `main` the site is built and (once Pages is enabled in repo settings) deployed to `https://linjiema.github.io/afmkit/`. The `mkdocs.yml` nav now lists every doc with proper structure (Home, Quick start, Migration, Tutorials, API reference, Contributing, Team, Roadmap, Changelog).
+
+- **`PeakReviewer.to_dict()` round-trip** — the per-peak accept / reject / manual_force state is a structured dict ready for the CSV / Markdown exporters; v0.4 will plumb it through `to_csv_fits` automatically.
+
+### Infrastructure
+
+- `pyproject.toml` `[dev]` extras now include `matplotlib`, `pillow`, `textual`, and `igor` (the latter pinned to `>=0.3`, the latest PyPI release — the `>=0.4` pin in the `[igor]` extra was aspirational; the 0.4 series is not on PyPI yet).
+- New mypy overrides on `matplotlib.*` / `matplotlib.pyplot` / `PIL.*` so mypy --strict on the test matrix resolves the import-not-found complaint for the v0.3 plot widget.
+- 380 + 12 doctest tests pass on every cell of the CI matrix (3 OS × 3 Python), up from 298 + 16 doctest in v0.2.0.
+
+### Known limitations (v0.4+ roadmap)
+
+- The peak-reviewer's CSV / Markdown export plumbing is not yet wired — `PeakReviewer.to_dict()` exists and the tests pass, but `to_csv_fits` / `to_markdown` still emit a row per `FitResult` only. Plumbing the per-peak state through the exporters is the first v0.4 task.
+- The plot panel currently shows a textual summary ("plot: curve 3 + 5 reviewed peak(s) + WLC fit p=0.41 nm") rather than rendering the actual matplotlib image into the panel. A real matplotlib-in-Textual widget is a v0.4 story.
+- `.ibw` v5 read / write is still v0.4.
+- The `Docs` workflow's `Deploy to GitHub Pages` step needs the human action of going to repo Settings → Pages → Source = "GitHub Actions" (a one-time GitHub UI step that cannot be done from a workflow). Until that's done, the `Docs` job fails on deploy (the build itself still succeeds and produces a `site/` artifact).
 
 ## [0.2.0] — 2026-07-30
 
