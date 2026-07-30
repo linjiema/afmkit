@@ -42,6 +42,26 @@ v0.4 tag is the next cut.
   install hint; either way the `#plot-panel` id is preserved so
   the toggle / render paths don't have to branch.
 
+- **`.ibw` v5 read + write**. The v0.3 writer was v2-only (the
+  upstream `igor==0.3` package's `save()` raises `NotImplementedError`,
+  so we wrote a stdlib-only v2 emitter). v0.4 adds a v5 write path
+  — `save_ibw(curve, path, *, version=5)` — and the v0.3 reader
+  already accepted v5 via the upstream `igor.binarywave.load`.
+  v5 is the modern Igor Pro 6.00+ layout (`WAVE_HEADER5` = 320 B,
+  `BIN_HEADER5` = 62 B, ``=`` byte order, ``P`` → ``I`` pointer
+  substitution) and is required by Igor Pro 7+ for waves that
+  reference text or extended dimension units. The v2 path stays
+  the default for back-compat; the round-trip is identical
+  between the two versions for the (ext, force) pairs afmkit
+  emits. 7 new tests in `test_igor_ibw.py` cover the v5 path:
+  round-trip preserves (ext, force) and k_cantilever, the
+  31-char v5 bname holds long source filenames, the v5 wave
+  header carries the right `type` / `dataUnits` / `dimUnits[0]`
+  / `sfA` / `sfB` / `fsValid` / `topFullScale` / `botFullScale`
+  fields, the v2 and v5 files produce equivalent curves, and
+  `save_ibw(..., version=3)` (or any other non-{2,5}) raises
+  `ValueError`.
+
 ### Process (v0.3 retrospective)
 
 Two process regressions bit the v0.1 → v0.2 → v0.3 cycle: (1) every
@@ -73,7 +93,6 @@ history would cause more pain than the broken process caused.
 
 Carried over from v0.3's Known limitations, in priority order:
 
-- `.ibw` v5 read / write (v0.3 has the v2 writer only).
 - The `Docs` workflow's `Deploy to GitHub Pages` step needs the
   one-time GitHub UI action at repo Settings → Pages → Source =
   "GitHub Actions". Until that's done, the `Docs` job's deploy
