@@ -64,6 +64,39 @@ New feature work piles on top; the v0.5 tag is the next cut.
   `_validate_reviewers_mapping` (the stray-index check
   previously inlined in `_write_per_peak_csv`).
 
+- **`.ibw` note full re-hydration on read**. The v0.4
+  `load_ibw` extracted only `k_cantilever` from the wave
+  `note`; everything else the writer had embedded (the
+  `temperature`, `experiment_id`, `n_averages`,
+  `operator`, `notes`, etc. that the v0.4 writer passes
+  through `_encode_note`'s `extra` kwargs) was silently
+  dropped. v0.5 introduces a generic note parser
+  (`_parse_note_metadata` + `_coerce_note_value` +
+  `_NOTE_TOKEN_RE`) that re-hydrates every scalar
+  `key=value` token with proper type coercion (int /
+  float / bool / str), the `k=` short form is renamed to
+  the canonical `k_cantilever` metadata key, and the legacy
+  `k_cantilever`-only path is preserved as a backward
+  compatibility shim. The reader is now symmetric with the
+  writer: every metadata key that goes in through
+  `save_ibw(curve, path, *, version=...)` comes back through
+  `load_ibw(path)`. A legacy file with a hand-written note
+  that has no `k=` token still loads cleanly (just without
+  the `k_cantilever` key, not a crash). 7 new tests in
+  `tests/unit/test_igor_ibw.py` cover the round-trip
+  contract for both v2 and v5.
+
+- **`roundtrip_ibw(curve, path, *, version=2)`** — a thin
+  convenience wrapper around `save_ibw` + `load_ibw` that
+  demonstrates the round-trip contract in one call. Returns
+  the loaded `ForceCurve` after asserting the
+  `(extension, force)` arrays round-trip via
+  `numpy.testing.assert_allclose` and that every scalar
+  metadata key the writer emitted comes back through the
+  loader. Useful for end-to-end smoke tests and for
+  documenting the v0.5+ note-rehydration contract in
+  downstream code.
+
 ### Known limitations (v0.5+ roadmap)
 
 - **`.ibw` v5 reader improvements** — the v0.4 reader still
@@ -79,13 +112,6 @@ New feature work piles on top; the v0.5 tag is the next cut.
   graphics) would be sharper and faster on terminals that
   support it. The half-block path is the v0.4 default
   because it works everywhere.
-- **FJC reading from the `.ibw` writer's 2-col layout** —
-  the v0.4 `.ibw` writer emits a 2-column wave (ext, force)
-  with an `afmkit=2col` note. The reader does not yet
-  reconstruct the `ForceCurve` directly from the note;
-  callers still need to know to pass `k_cantilever`
-  explicitly. A round-trip helper that reads the note and
-  re-hydrates the `ForceCurve` is the v0.5 piece.
 
 ## [0.4.0] — 2026-07-30
 
