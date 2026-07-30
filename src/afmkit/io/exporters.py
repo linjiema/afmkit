@@ -364,6 +364,35 @@ def _write_per_peak_csv(
     zero peaks, or no reviewer at all, contributes a single row
     with the peak columns empty.
     """
+    _validate_reviewers_mapping(reviewers, len(fits))
+    rows = _build_peak_review_rows(fits, all_params, reviewers)
+    df = pd.DataFrame(rows)
+    df.to_csv(path, index=False)
+
+
+def _build_peak_review_rows(
+    fits: list[FitResult],
+    all_params: list[str],
+    reviewers: dict[int, PeakReviewer],
+) -> list[dict[str, Any]]:
+    """Build the per-(curve, peak) review rows shared by all v0.4+ exporters.
+
+    Each row is a flat dict with the per-fit columns (model, params,
+    std-errors, goodness-of-fit) plus the per-peak review columns
+    (``curve_index``, ``peak_index``, ``extension_nm``, ``force_pN``,
+    ``manual_force_pN``, ``accepted``, ``confidence``, ``prominence_pN``,
+    ``width_points``, ``height_drop_pN``, ``note``). The CSV writer
+    drops these straight into a :class:`pandas.DataFrame`; the
+    ``.mat`` writer coerces them into a struct array; the parquet
+    writer passes them to ``pyarrow.Table.from_pandas``.
+
+    A fit whose curve index has a reviewer with at least one peak
+    contributes one row per peak. A fit whose curve index has a
+    reviewer with zero peaks, or no reviewer at all, contributes a
+    single row with the peak columns set to their empty values
+    (NaN / ``""`` / ``False`` / ``-1`` for ints) so every fit is
+    still represented.
+    """
     rows: list[dict[str, Any]] = []
     for curve_idx, fit in enumerate(fits):
         fit_cols = _fit_columns(fit, all_params)
@@ -388,7 +417,9 @@ def _write_per_peak_csv(
             row["extension_nm"] = float(peak_dict["extension"])
             row["force_pN"] = float(peak_dict["force"])
             row["manual_force_pN"] = (
-                float(peak_dict["manual_force"]) if peak_dict["manual_force"] is not None else ""
+                float(peak_dict["manual_force"])
+                if peak_dict["manual_force"] is not None
+                else float("nan")
             )
             row["accepted"] = bool(peak_dict["accepted"])
             row["confidence"] = float(peak_dict["confidence"])
@@ -397,19 +428,44 @@ def _write_per_peak_csv(
             row["height_drop_pN"] = float(peak_dict["height_drop"])
             row["note"] = str(peak_dict["note"])
             rows.append(row)
+    return rows
 
-    # Validate the mapping: any reviewer with a curve_index beyond
-    # the fit list is almost certainly a user error. Surface it now
-    # with a clear message.
-    stray = [i for i in reviewers if i >= len(fits) or i < -len(fits)]
+
+def _build_fit_rows(
+    fits: list[FitResult],
+    all_params: list[str],
+) -> list[dict[str, Any]]:
+    """Build the one-row-per-fit table shared by ``to_mat`` and ``to_parquet``.
+
+    The schema is the v0.3 CSV one-row-per-fit shape (``model``,
+    ``p``, ``p_stderr``, ``L``, ``L_stderr``, ``chi_square``,
+    ``reduced_chi_square``, ``n_data`` for a batch of WLC fits) with
+    the ``curve_index`` column appended so the per-fit table joins
+    back to the per-peak / per-curve tables on the curve index.
+    """
+    rows: list[dict[str, Any]] = []
+    for curve_idx, fit in enumerate(fits):
+        row = _fit_columns(fit, all_params)
+        row["curve_index"] = curve_idx
+        rows.append(row)
+    return rows
+
+
+def _validate_reviewers_mapping(
+    reviewers: dict[int, PeakReviewer],
+    n_fits: int,
+) -> None:
+    """Raise ``ValueError`` if any reviewer key is out of range.
+
+    Catches the off-by-one mistake of indexing by ``curve.metadata``
+    position instead of batch position, or a typo'd curve index.
+    """
+    stray = [i for i in reviewers if i >= n_fits or i < -n_fits]
     if stray:
         raise ValueError(
             f"reviewers mapping has entries for curve indices not in the "
-            f"fit list: {sorted(stray)} (fit list has {len(fits)} entries)"
+            f"fit list: {sorted(stray)} (fit list has {n_fits} entries)"
         )
-
-    df = pd.DataFrame(rows)
-    df.to_csv(path, index=False)
 
 
 def _fit_columns(fit: FitResult, all_params: list[str]) -> dict[str, Any]:
@@ -444,32 +500,42 @@ def _fit_columns(fit: FitResult, all_params: list[str]) -> dict[str, Any]:
 def _empty_peak_value(col: str) -> Any:
     """Return the empty value used for a peak column on a no-peak row.
 
-    Float columns are NaN (pandas will write them as empty cells);
-    the manual_force column is a string-or-float so we use an
-    empty string for consistency with the explicit ``""`` we emit
-    when the peak dict has ``manual_force is None``. The bool
-    column defaults to ``False`` — the convention is "no review
-    yet, so the peak is un-accepted" — but downstream readers
-    should treat the ``curve_index`` row as a fit-only row by
-    checking for NaN / empty values in the peak columns.
+    All columns are returned as a single ``NaN`` (pandas writes this
+    as an empty cell and reads it back as ``NaN``; the ``.mat``
+    writer converts NaN to the empty string for the struct fields
+    that have to be string-typed). The bool column defaults to
+    ``False`` — the convention is "no review yet, so the peak is
+    un-accepted" — but downstream readers should treat the
+    ``curve_index`` row as a fit-only row by checking for NaN in
+    the peak columns.
     """
-    if col in ("extension_nm", "force_pN", "prominence_pN", "height_drop_pN", "confidence"):
+    if col in (
+        "extension_nm",
+        "force_pN",
+        "manual_force_pN",
+        "prominence_pN",
+        "height_drop_pN",
+        "confidence",
+        "note",
+    ):
         return float("nan")
     if col in ("width_points", "peak_index"):
         return -1
-    if col == "manual_force_pN":
-        return ""
     if col == "accepted":
         return False
-    if col == "note":
-        return ""
-    return ""
+    return float("nan")
 
 
 # -- to_mat --------------------------------------------------------------
 
 
-def to_mat(batch: CurveBatch, path: Path | str) -> None:
+def to_mat(
+    batch: CurveBatch,
+    path: Path | str,
+    *,
+    fits: list[FitResult] | None = None,
+    reviewers: dict[int, PeakReviewer] | None = None,
+) -> None:
     """Write the batch as a Matlab v5 ``.mat`` file.
 
     The file contains a top-level struct with the following fields:
@@ -492,6 +558,23 @@ def to_mat(batch: CurveBatch, path: Path | str) -> None:
         One field per batch-level metadata entry.
     ``curve_metadata_json``
         JSON-encoded per-curve metadata (one string per curve).
+    ``fits`` (v0.5+)
+        One-row-per-fit table (model, params, std-errors,
+        goodness-of-fit, ``curve_index``). Only present when
+        ``fits`` is provided. Each parameter column is named
+        ``<name>`` and the standard error is ``<name>_stderr``;
+        the column order matches the v0.3 ``to_csv_fits`` shape.
+    ``peak_review`` (v0.5+)
+        One-row-per-(curve, peak) table carrying the per-peak
+        review state (``peak_index``, ``extension_nm``,
+        ``force_pN``, ``manual_force_pN``, ``accepted``,
+        ``confidence``, ``prominence_pN``, ``width_points``,
+        ``height_drop_pN``, ``note``) joined with the fit
+        columns and the ``curve_index`` column. Only present
+        when ``reviewers`` is provided. Curves with a reviewer
+        but zero peaks (or no reviewer at all) get a single row
+        with the peak columns empty so every fit is
+        represented.
 
     Round-trip
     ----------
@@ -502,6 +585,8 @@ def to_mat(batch: CurveBatch, path: Path | str) -> None:
         n_curves = int(data["n_curves"].item())
         ext = data["extension"]                          # (n_curves, n_max)
         meta = json.loads(data["curve_metadata_json"][0])
+        if "peak_review" in data:
+            peak_df = pd.DataFrame(data["peak_review"])
 
     .. note::
        This implementation uses the scipy v5 format (the default of
@@ -543,6 +628,42 @@ def to_mat(batch: CurveBatch, path: Path | str) -> None:
     # simple and round-trips through ``loadmat`` without surprises.
     mdict["curve_metadata_json"] = np.array([json.dumps(c.metadata) for c in batch])
 
+    # v0.5+ fit / peak-review tables. Both are emitted as Matlab
+    # struct arrays (1-D structured numpy ndarrays) so they pass
+    # through ``savemat`` cleanly and round-trip back to a
+    # ``dtype.names``-bearing struct on the load side (squeeze the
+    # loaded (1, N) array to recover the canonical 1-D layout).
+    # The legacy v0.4 shape (no fits, no reviewers) is preserved
+    # because the kwargs default to None.
+    if fits is not None:
+        if not fits:
+            raise ValueError("Cannot export an empty list of fits")
+        all_params: list[str] = []
+        for fit in fits:
+            for name in fit.params:
+                if name not in all_params:
+                    all_params.append(name)
+        mdict["fits"] = _build_matlab_table(
+            _build_fit_rows(fits, all_params), fit_param_names=all_params
+        )
+
+    if reviewers is not None:
+        if fits is None:
+            raise ValueError(
+                "to_mat: `reviewers` requires `fits` — the per-peak "
+                "table joins the fit columns, so a fit list is needed"
+            )
+        _validate_reviewers_mapping(reviewers, len(fits))
+        all_params = []
+        for fit in fits:
+            for name in fit.params:
+                if name not in all_params:
+                    all_params.append(name)
+        mdict["peak_review"] = _build_matlab_table(
+            _build_peak_review_rows(fits, all_params, reviewers),
+            fit_param_names=all_params,
+        )
+
     scipy.io.savemat(str(Path(path)), mdict)
 
 
@@ -558,16 +679,186 @@ def _coerce_for_matlab(value: Any) -> Any:
         return str(value)
 
 
+# Per-field dtypes used by :func:`_build_matlab_table` to assemble a
+# structured numpy array for the per-fit / per-peak tables. The
+# ``note`` and ``manual_force_pN`` columns are variable-width
+# unicode (U32 is enough for a one-line note; the round-trip
+# preserves the content as a ``numpy.str_`` scalar). Numeric
+# columns are float64 so NaN round-trips cleanly; integer
+# columns are int32 to match scipy's default. The ``accepted``
+# bool is the only non-numeric / non-string column.
+_MATLAB_FIELD_DTYPES: dict[str, str] = {
+    "curve_index": "i4",
+    "peak_index": "i4",
+    "extension_nm": "f8",
+    "force_pN": "f8",
+    "manual_force_pN": "f8",
+    "accepted": "?",
+    "confidence": "f8",
+    "prominence_pN": "f8",
+    "width_points": "i4",
+    "height_drop_pN": "f8",
+    "note": "U32",
+    "model": "U32",
+    "chi_square": "f8",
+    "reduced_chi_square": "f8",
+    "n_data": "i4",
+}
+
+
+def _build_matlab_table(
+    rows: list[dict[str, Any]],
+    fit_param_names: list[str] | None = None,
+) -> np.ndarray:
+    """Assemble a list of per-fit / per-peak row dicts into a structured ndarray.
+
+    The output is a 1-D structured ``numpy.ndarray`` with one
+    entry per row and one named field per column. The struct
+    passes through :func:`scipy.io.savemat` as a Matlab struct
+    array and round-trips back through :func:`scipy.io.loadmat`
+    (the loaded shape is ``(1, N)`` because Matlab stores struct
+    arrays as 2-D; ``.squeeze()`` recovers the 1-D layout).
+
+    Column types are looked up from :data:`_MATLAB_FIELD_DTYPES`;
+    the fit parameter columns (``p``, ``L``, ``K0``, ``b``, ``Lc``,
+    ``<name>_stderr``) are added with the float64 dtype. Missing
+    fields in a row are filled with NaN / ``""`` / ``False`` / ``-1``
+    so the struct dtype stays fixed.
+    """
+    dtype_list: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    # Stable column order: the peak / fit schema columns in their
+    # declared order, then any fit parameters the caller passed in.
+    for col in _PEAK_REVIEW_COLUMNS:
+        if col in _MATLAB_FIELD_DTYPES and col not in seen:
+            dtype_list.append((col, _MATLAB_FIELD_DTYPES[col]))
+            seen.add(col)
+    # Fit-block columns (model, chi_square, reduced_chi_square,
+    # n_data) come from the per-fit table and join the peak table
+    # via ``_build_peak_review_rows``.
+    for col in ("model", "chi_square", "reduced_chi_square", "n_data"):
+        if col in _MATLAB_FIELD_DTYPES and col not in seen:
+            dtype_list.append((col, _MATLAB_FIELD_DTYPES[col]))
+            seen.add(col)
+    if fit_param_names is not None:
+        for name in fit_param_names:
+            for col in (name, f"{name}_stderr"):
+                if col not in seen:
+                    dtype_list.append((col, "f8"))
+                    seen.add(col)
+
+    if not rows:
+        # Empty table — return a 1-D structured array of length 0
+        # with the right dtype. ``savemat`` writes this as a 0x0
+        # Matlab struct, which round-trips cleanly.
+        return np.zeros(0, dtype=dtype_list)
+
+    # Coerce each row's values into the dtype-friendly form.
+    records: list[tuple[Any, ...]] = []
+    for row in rows:
+        record: list[Any] = []
+        for col, dtype in dtype_list:
+            value = row.get(col, _empty_matlab_value(dtype))
+            record.append(_coerce_for_matlab_field(value, dtype))
+        records.append(tuple(record))
+    return np.array(records, dtype=dtype_list)
+
+
+def _empty_matlab_value(dtype: str) -> Any:
+    """The "no data" marker for a given numpy dtype string."""
+    if dtype == "?":
+        return False
+    if dtype.startswith("i") or dtype.startswith("u"):
+        return -1
+    if dtype.startswith("f"):
+        return float("nan")
+    if dtype.startswith("U") or dtype.startswith("S"):
+        return ""
+    return float("nan")
+
+
+def _coerce_for_matlab_field(value: Any, dtype: str) -> Any:
+    """Coerce a single row value into a value compatible with ``dtype``.
+
+    Handles the four cases the v0.5 schema actually needs:
+    numeric (``int``/``float``/``NaN``/``np.nan``), bool, string,
+    and the "no data" markers produced by :func:`_empty_matlab_value`.
+    """
+    if dtype == "?":
+        # ``bool`` field. ``NaN`` is treated as "un-reviewed" →
+        # ``False`` (matches the CSV behaviour: placeholder rows
+        # default ``accepted=False``).
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            return False
+        return bool(value)
+    if dtype.startswith("i") or dtype.startswith("u"):
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            return -1
+        return int(value)
+    if dtype.startswith("f"):
+        if value is None or (isinstance(value, float) and np.isnan(value)) or value == "":
+            return float("nan")
+        return float(value)
+    if dtype.startswith("U") or dtype.startswith("S"):
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            return ""
+        return str(value)
+    return value
+
+
 # -- to_parquet ----------------------------------------------------------
 
 
-def to_parquet(batch: CurveBatch, path: Path | str) -> None:
-    """Write the batch as a wide Parquet file.
+def to_parquet(
+    batch: CurveBatch,
+    path: Path | str,
+    *,
+    fits: list[FitResult] | None = None,
+    reviewers: dict[int, PeakReviewer] | None = None,
+) -> None:
+    """Write the batch as a Parquet file (or set of files).
 
-    The on-disk layout matches :func:`to_csv` (one row per point index,
-    two data columns per curve). Parquet's binary encoding and rich
-    schema metadata make this the preferred format for downstream
-    pandas / polars analysis.
+    The on-disk layout matches :func:`to_csv` (one row per point
+    index, two data columns per curve). Parquet's binary encoding
+    and rich schema metadata make this the preferred format for
+    downstream pandas / polars analysis.
+
+    When ``fits`` or ``reviewers`` are provided, the additional
+    tables are written as **sibling files** next to the main
+    curves file, not as additional row groups inside the same
+    file. The naming convention is:
+
+    ============================  ==================================
+    Suffix                         Contents
+    ============================  ==================================
+    ``<path>.parquet``             The curves (the v0.4 layout).
+    ``<path>.fits.parquet``        One row per fit (model, params,
+                                   std-errors, goodness-of-fit,
+                                   ``curve_index``). Only written
+                                   when ``fits`` is provided.
+    ``<path>.peaks.parquet``       One row per (curve, peak) with
+                                   the per-peak review state joined
+                                   to the fit columns. Only
+                                   written when ``reviewers`` is
+                                   provided. The curves in the
+                                   batch without a reviewer entry
+                                   (or with a reviewer but zero
+                                   peaks) get a single row with
+                                   the peak columns empty so every
+                                   fit is represented.
+
+    The sibling-file layout is chosen over a single Parquet
+    Dataset because the three tables have fundamentally different
+    shapes (one row per point vs one row per fit vs one row per
+    (curve, peak)) and pandas / polars users typically want to
+    load them independently. To load all three:
+
+    .. code-block:: python
+
+        curves = pd.read_parquet("data.parquet")
+        fits = pd.read_parquet("data.fits.parquet")
+        peaks = pd.read_parquet("data.peaks.parquet")
 
     Prefers :mod:`pyarrow` as the backend. Falls back to
     :mod:`fastparquet` if pyarrow is not installed. Raises
@@ -580,18 +871,67 @@ def to_parquet(batch: CurveBatch, path: Path | str) -> None:
         import pyarrow as pa  # type: ignore[import-untyped]
         import pyarrow.parquet as pq  # type: ignore[import-untyped]
     except ImportError as exc:
+        _arrow_available = False
+        _pyarrow_exc = exc
+    else:
+        _arrow_available = True
+
+    if not _arrow_available:
+        # fastparquet fallback only supports the main curves file.
+        # ``fits`` / ``reviewers`` paths would need to be skipped
+        # or written through a different backend; we surface a
+        # clear ImportError rather than silently dropping the
+        # extra tables.
+        if fits is not None or reviewers is not None:
+            raise ImportError(
+                "to_parquet(fits=..., reviewers=...) requires pyarrow; "
+                f"pyarrow is not available ({_pyarrow_exc}). Install "
+                "pyarrow to write the fit / peak-review sibling files."
+            ) from _pyarrow_exc
         try:
             df.to_parquet(str(path), engine="fastparquet")
         except (ImportError, ValueError) as exc2:
-            # ``ValueError`` is raised by pandas when the requested
-            # engine isn't installed (e.g. older pandas versions).
             raise ImportError(
                 "to_parquet requires either pyarrow or fastparquet; "
-                f"neither is available (pyarrow: {exc}; fastparquet: {exc2})"
+                f"neither is available (pyarrow: {_pyarrow_exc}; "
+                f"fastparquet: {exc2})"
             ) from exc2
-    else:
-        table = pa.Table.from_pandas(df)
-        pq.write_table(table, str(path))
+        return
+
+    # Main curves file (the v0.4 layout).
+    table = pa.Table.from_pandas(df)
+    pq.write_table(table, str(path))
+
+    # Sibling files for the per-fit and per-peak tables. The
+    # ``curve_index`` column is the join key across all three
+    # files.
+    if fits is not None:
+        if not fits:
+            raise ValueError("Cannot export an empty list of fits")
+        all_params: list[str] = []
+        for fit in fits:
+            for name in fit.params:
+                if name not in all_params:
+                    all_params.append(name)
+        fit_df = pd.DataFrame(_build_fit_rows(fits, all_params))
+        fit_path = path.with_suffix(".fits.parquet")
+        pq.write_table(pa.Table.from_pandas(fit_df), str(fit_path))
+
+    if reviewers is not None:
+        if fits is None:
+            raise ValueError(
+                "to_parquet: `reviewers` requires `fits` — the per-peak "
+                "table joins the fit columns, so a fit list is needed"
+            )
+        _validate_reviewers_mapping(reviewers, len(fits))
+        all_params = []
+        for fit in fits:
+            for name in fit.params:
+                if name not in all_params:
+                    all_params.append(name)
+        peak_df = pd.DataFrame(_build_peak_review_rows(fits, all_params, reviewers))
+        peak_path = path.with_suffix(".peaks.parquet")
+        pq.write_table(pa.Table.from_pandas(peak_df), str(peak_path))
 
 
 # -- to_markdown ---------------------------------------------------------

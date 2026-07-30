@@ -8,6 +8,85 @@ and the format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1
 
 New feature work piles on top; the v0.5 tag is the next cut.
 
+### Added
+
+- **`to_mat` and `to_parquet` accept `fits` and `reviewers`
+  kwargs**. This is the v0.5 + symmetric completion of the
+  v0.4 #1 peak-review plumbing: `to_csv_fits` and `to_markdown`
+  switched to one-row-per-(curve, peak) when `reviewers` is
+  provided; `to_mat` and `to_parquet` now do the same. The
+  three tables (`fits`, `peak_review`, and the original
+  curves) join on `curve_index`, and the per-peak review state
+  (accept / reject / override force / note) flows through to
+  both backends.
+  - **`to_mat`**: when `fits` is provided, a top-level `fits`
+    struct is added to the `.mat` file (one entry per fit
+    with the per-fit schema: model, params, std-errors,
+    goodness-of-fit, `curve_index`). When `reviewers` is
+    provided alongside `fits`, a top-level `peak_review`
+    struct is added (one entry per (curve, peak) with the
+    per-peak review columns joined to the fit columns).
+    Both structs are emitted as 1-D structured ndarrays so
+    the round-trip through `scipy.io.loadmat` is clean
+    (squeeze the loaded `(1, N)` shape to recover the
+    canonical 1-D layout). The legacy v0.4 shape (no fits,
+    no reviewers) is preserved.
+  - **`to_parquet`**: when `fits` is provided, a sibling
+    `<path>.fits.parquet` file is written next to the main
+    curves file. When `reviewers` is provided alongside
+    `fits`, a sibling `<path>.peaks.parquet` file is
+    written with the per-(curve, peak) review table. The
+    three-file layout (curves / fits / peaks) matches the
+    three natural shapes (one row per point / one row per
+    fit / one row per (curve, peak)) and lets pandas /
+    polars users load each one independently. The fastparquet
+    fallback only supports the main curves file; the
+    `fits` / `reviewers` paths require pyarrow and surface
+    a clear `ImportError` when pyarrow is not installed.
+  - The per-peak review column schema is the same as
+    `to_csv_fits`: `curve_index`, `peak_index`,
+    `extension_nm`, `force_pN`, `manual_force_pN`,
+    `accepted`, `confidence`, `prominence_pN`,
+    `width_points`, `height_drop_pN`, `note`. The
+    `manual_force_pN` and `note` columns now use `NaN`
+    (instead of empty string) as the "no override / no
+    note" marker, which keeps pyarrow's column type
+    inference happy and round-trips cleanly through pandas.
+    The CSV / Markdown paths still produce the v0.4
+    output (empty string for `manual_force_pN`); the change
+    is internal to the v0.5 row builder.
+- **Refactored the per-peak row builder** out of
+  `_write_per_peak_csv` into the shared `_build_peak_review_rows`
+  helper. Same logic, but the new helper returns a list of
+  plain dicts that the CSV / `.mat` / parquet writers can each
+  post-process. Also added `_build_fit_rows` (one-row-per-fit
+  table used by `to_mat` and `to_parquet`) and
+  `_validate_reviewers_mapping` (the stray-index check
+  previously inlined in `_write_per_peak_csv`).
+
+### Known limitations (v0.5+ roadmap)
+
+- **`.ibw` v5 reader improvements** — the v0.4 reader still
+  delegates to the upstream `igor.binarywave.load` for v5.
+  A stdlib-only v5 reader (matching the v2 / v5 writer
+  pattern) would let us drop the `igor` runtime dep for the
+  read path too, and would let us test the v5 round-trip
+  byte-by-byte instead of via the upstream black box.
+- **Matplotlib TUI plot panel native image** — the v0.4
+  plot panel renders the matplotlib figure as a half-block
+  text image via `rich.Console`. A native image render via
+  the Textual image protocol (Sixel / Kitty / iTerm
+  graphics) would be sharper and faster on terminals that
+  support it. The half-block path is the v0.4 default
+  because it works everywhere.
+- **FJC reading from the `.ibw` writer's 2-col layout** —
+  the v0.4 `.ibw` writer emits a 2-column wave (ext, force)
+  with an `afmkit=2col` note. The reader does not yet
+  reconstruct the `ForceCurve` directly from the note;
+  callers still need to know to pass `k_cantilever`
+  explicitly. A round-trip helper that reads the note and
+  re-hydrates the `ForceCurve` is the v0.5 piece.
+
 ## [0.4.0] — 2026-07-30
 
 **The v0.3 retrospective is fully landed, four v0.4 features ship on
