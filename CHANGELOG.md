@@ -28,6 +28,20 @@ v0.4 tag is the next cut.
   Curves with a reviewer but zero peaks get a single empty row; curves
   without a reviewer entry still get a row so every fit is represented.
 
+- **Real matplotlib plot in the TUI plot panel**. The v0.3 plot panel
+  was a `Static` widget that only ever showed a textual summary
+  ("plot: curve 3 + 5 reviewed peak(s) + WLC fit p=0.41 nm"); the
+  matplotlib figure rendered by `ForceExtensionPlot.render_curve` was
+  thrown away because the v0.3 code path didn't have a Textual
+  Console to drop the renderable into. v0.4 replaces the `Static`
+  with a `Container` that holds the actual `ForceExtensionPlot`
+  widget, mounted once in `compose()`. `_render_plot` now calls
+  `render_curve` on the mounted widget — the half-block image
+  actually shows up in the TUI. When the `[plot]` extra is not
+  installed, the container holds a `Static` fallback with the
+  install hint; either way the `#plot-panel` id is preserved so
+  the toggle / render paths don't have to branch.
+
 ### Process (v0.3 retrospective)
 
 Two process regressions bit the v0.1 → v0.2 → v0.3 cycle: (1) every
@@ -59,10 +73,6 @@ history would cause more pain than the broken process caused.
 
 Carried over from v0.3's Known limitations, in priority order:
 
-- The plot panel currently shows a textual summary
-  ("plot: curve 3 + 5 reviewed peak(s) + WLC fit p=0.41 nm") rather
-  than rendering the actual matplotlib image into the panel. A real
-  matplotlib-in-Textual widget is a v0.4 story.
 - `.ibw` v5 read / write (v0.3 has the v2 writer only).
 - The `Docs` workflow's `Deploy to GitHub Pages` step needs the
   one-time GitHub UI action at repo Settings → Pages → Source =
