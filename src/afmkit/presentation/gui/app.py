@@ -61,7 +61,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 try:
     from textual.app import App, ComposeResult
     from textual.binding import Binding, BindingType
-    from textual.containers import Vertical
+    from textual.containers import Container, Vertical
     from textual.screen import ModalScreen
     from textual.widgets import DataTable, Footer, Header, Input, Static
 except ImportError as _exc:  # pragma: no cover - exercised only when textual is missing
@@ -318,6 +318,16 @@ if _TEXTUAL_IMPORT_ERROR is None:
             height: 18;
             border: round $primary;
         }
+        #plot-widget {
+            width: 100%;
+            height: 100%;
+        }
+        #plot-fallback {
+            width: 100%;
+            height: 100%;
+            content-align: center middle;
+            padding: 1 2;
+        }
         #status-line {
             height: 3;
             padding: 0 1;
@@ -341,11 +351,35 @@ if _TEXTUAL_IMPORT_ERROR is None:
             self._last_fit: Any = None  # FitResult | None
             # v0.3 plot panel state.
             self._show_plot: bool = False
+            # v0.4 plot panel: cache whether the matplotlib widget
+            # is importable. ``afmkit.presentation.gui.plot`` imports
+            # matplotlib at module level; if the [plot] extra is not
+            # installed, the import raises and ``compose()`` mounts a
+            # Static fallback instead of the real widget. The cached
+            # error string is what the fallback displays.
+            self._plot_widget_cls: Any = None  # ForceExtensionPlot | None
+            self._plot_widget_import_error: str = ""
+            try:
+                from afmkit.presentation.gui.plot import (
+                    ForceExtensionPlot as _ForceExtensionPlot,
+                )
+
+                self._plot_widget_cls = _ForceExtensionPlot
+            except ImportError as _exc:
+                self._plot_widget_import_error = str(_exc)
 
         def compose(self) -> ComposeResult:
             """Build the layout: header, dir row, curves table, peak-review
             table (initially hidden), plot panel (initially hidden),
             status line, footer.
+
+            The plot panel is a :class:`Container` that holds either
+            the real :class:`~afmkit.presentation.gui.plot.ForceExtensionPlot`
+            widget (when the ``[plot]`` extra is installed) or a
+            :class:`Static` fallback that shows the import error and
+            the install command. Either way the panel is identified by
+            the ``#plot-panel`` id so the toggle / render paths don't
+            have to branch on which child is mounted.
             """
             yield Header(show_clock=False)
             with Vertical(id="dir-row"):
@@ -355,11 +389,21 @@ if _TEXTUAL_IMPORT_ERROR is None:
                 )
             yield DataTable(id="curves-table", zebra_stripes=True, cursor_type="row")
             yield DataTable(id="peak-review-table", zebra_stripes=True, cursor_type="row")
-            yield Static(
-                "Plot panel: press [bold]P[/bold] to toggle "
-                "(requires matplotlib via `pip install afmkit[plot]`)",
-                id="plot-panel",
-            )
+            with Container(id="plot-panel"):
+                if self._plot_widget_cls is not None:
+                    yield self._plot_widget_cls(
+                        width=120,
+                        height=18,
+                        title="",
+                        id="plot-widget",
+                    )
+                else:
+                    yield Static(
+                        f"Plot panel: matplotlib not installed.\n"
+                        f"{self._plot_widget_import_error}\n"
+                        f"Install with [bold]pip install 'afmkit[plot]'[/bold]",
+                        id="plot-fallback",
+                    )
             yield Static("", id="status-line")
             yield Footer()
 
@@ -675,15 +719,23 @@ if _TEXTUAL_IMPORT_ERROR is None:
         def _render_plot(self) -> None:
             """Render the current curve + peaks + last fit into the plot panel.
 
-            Imports the matplotlib widget lazily so a TUI install
-            without [plot] doesn't crash. If the widget isn't
-            available, write an error message into the plot panel.
+            v0.4: the plot panel is the real :class:`ForceExtensionPlot`
+            widget (mounted once in :meth:`compose`); this method just
+            calls :meth:`ForceExtensionPlot.render_curve` on it. The
+            widget caches the Pillow bitmap and emits a half-block
+            rich renderable on the next Textual refresh — no more
+            throwaway widget + textual-summary hack from v0.3.
+
+            When the ``[plot]`` extra is not installed, the panel
+            contains a :class:`Static` fallback (mounted by
+            :meth:`compose`); this method surfaces a short
+            install-hint in the status line so the user knows why
+            the panel is empty.
             """
-            panel: Any = self.query_one("#plot-panel")
             if not self._show_plot:
                 return
             if self._current_curve_idx is None and not self._curves:
-                panel.update("[yellow]no curve loaded[/yellow]")
+                self._set_status("[yellow]no curve loaded — press o to open a directory[/yellow]")
                 return
             if self._current_curve_idx is None:
                 # Show the highlighted curve (if any), or the first one.
@@ -693,44 +745,45 @@ if _TEXTUAL_IMPORT_ERROR is None:
                     row = 0
                 self._current_curve_idx = int(row)
             curve = self._curves[self._current_curve_idx]
+            if self._plot_widget_cls is None:
+                # The fallback Static is already showing the install
+                # hint; just nudge the status line.
+                self._set_status(
+                    "[yellow]plot panel: matplotlib not installed; "
+                    "run `pip install 'afmkit[plot]'`[/yellow]"
+                )
+                return
             try:
-                from afmkit.presentation.gui.plot import ForceExtensionPlot
-
-                widget = ForceExtensionPlot(
-                    width=120, height=18, title=f"curve {self._current_curve_idx}"
-                )
-                widget.render_curve(
-                    curve,
-                    peaks=(
-                        [rp.peak for rp in self._reviewer] if self._reviewer is not None else None
-                    ),
-                    fit=self._last_fit,
-                )
-                # Re-render the widget into a string we can drop into
-                # the Static panel. The widget's render() returns a
-                # rich renderable; we render to the screen and read
-                # the cells. We don't have a Console here, so we just
-                # acknowledge the render succeeded and let the user
-                # know via the status line.
-                panel.update(
-                    f"[green]plot:[/green] curve {self._current_curve_idx} "
-                    f"({curve.n_points} pts)"
-                    + (
-                        f" + {len(self._reviewer)} reviewed peak(s)"
-                        if self._reviewer is not None
-                        else ""
-                    )
-                    + (
-                        f" + WLC fit p={_fmt_num(self._last_fit.params.get('p'))} nm"
-                        if self._last_fit is not None
-                        else " (no fit yet — press [bold]f[/bold])"
-                    )
-                )
+                widget: Any = self.query_one("#plot-widget", self._plot_widget_cls)
+            except Exception as exc:  # pragma: no cover - defensive
+                self._set_status(f"[red]plot panel widget missing:[/red] {exc}")
+                return
+            peaks: list[Any] | None = (
+                [rp.peak for rp in self._reviewer] if self._reviewer is not None else None
+            )
+            try:
+                widget.render_curve(curve, peaks=peaks, fit=self._last_fit)
             except ImportError as exc:
-                panel.update(
+                # render_curve raises ImportError if matplotlib or
+                # Pillow is not installed at the time of the draw.
+                # The compose() guard already covered the
+                # module-level import; this catches a runtime
+                # uninstall (very unlikely in practice).
+                self._set_status(
                     f"[red]plot unavailable:[/red] {exc}\n"
                     f"Install with [bold]pip install 'afmkit[plot]'[/bold]"
                 )
+                return
+            self._set_status(
+                f"[green]plot rendered[/green] curve {self._current_curve_idx} "
+                f"({curve.n_points} pts)"
+                + (f" + {len(self._reviewer)} peak(s)" if self._reviewer is not None else "")
+                + (
+                    f" + WLC fit p={_fmt_num(self._last_fit.params.get('p'))} nm"
+                    if self._last_fit is not None
+                    else ""
+                )
+            )
 
         def _set_status(self, msg: str) -> None:
             """Replace the status-line text and log it for the user's terminal scrollback."""
