@@ -283,6 +283,19 @@ module = "textual.*"
 ignore_missing_imports = true
 disable_error_code = ["misc"]
 
+[[tool.mypy.overrides]]
+# The TUI is implemented entirely in terms of textual runtime classes
+# (App, ModalScreen, DataTable, ...). The textual package ships
+# partial stubs and different mypy versions disagree on whether
+# ``App`` / ``ModalScreen`` are subclassable; some versions surface
+# the names as ``Any`` and then refuse a subclass with a "Class
+# cannot subclass value of type Any" [misc] false positive that does
+# not actually flag a real bug. Turn off ``misc`` for the whole gui
+# submodule so the rest of afmkit stays mypy --strict without the
+# TUI forcing a noise-floor of false positives.
+module = "afmkit.presentation.gui.*"
+disable_error_code = ["misc"]
+
 # =============================================================================
 # pytest
 # =============================================================================
