@@ -1,8 +1,8 @@
 site_name: afmkit
 site_description: Modern Python toolkit for single-molecule force spectroscopy
-site_url: https://afmkit.readthedocs.io
+site_url: https://linjiema.github.io/afmkit/
 repo_url: https://github.com/linjiema/afmkit
-repo_name: afmkit
+repo_name: linjiema/afmkit
 edit_uri: edit/main/docs/
 
 theme:
@@ -76,11 +76,15 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Quickstart: quickstart.md
+  - Quick start: quickstart.md
+  - Migration from Igor Pro: migration.md
   - Tutorials:
       - tutorials/index.md
   - API reference:
       - api/index.md
-  - Migration from Igor Pro: migration.md
+      - api/curve.md
   - Contributing: contributing.md
+  - Team & agent workflow: team.md
+  - Roadmap:
+      - v0.3: v0.3-roadmap.md
   - Changelog: https://github.com/linjiema/afmkit/blob/main/CHANGELOG.md

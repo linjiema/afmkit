@@ -1,8 +1,10 @@
 # Contributing and plugin authoring
 
 For the full contribution guide (dev setup, code style, PR workflow,
-release process), see [CONTRIBUTING.md](../CONTRIBUTING.md) at the
-repository root. This page focuses on **writing plugins** for afmkit.
+release process), see
+[CONTRIBUTING.md](https://github.com/linjiema/afmkit/blob/main/CONTRIBUTING.md)
+at the repository root. This page focuses on **writing plugins** for
+afmkit.
 
 ## Why plugins?
 

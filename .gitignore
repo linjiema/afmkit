@@ -64,3 +64,5 @@ data/private/
 *.pyc
 .h5/
 *.h5.bak
+# mkdocs build output
+site/
