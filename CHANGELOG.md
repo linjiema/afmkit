@@ -6,100 +6,125 @@ and the format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1
 
 ## [Unreleased]
 
-The v0.3 retrospective process fix is in this section; it lands on
-`develop` with the PR that introduced the workflow rules (no separate
-v0.3.1 paperwork-pass release). New feature work will pile on top; the
-v0.4 tag is the next cut.
+New feature work piles on top; the v0.5 tag is the next cut.
+
+## [0.4.0] — 2026-07-30
+
+**The v0.3 retrospective is fully landed, four v0.4 features ship on
+top, and the docs site is live.** The headline is the process fix:
+the workflow rules, the release checklist, and the pre-commit-in-CI
+gate mean future releases can no longer land without a branch /
+PR / paperwork pass / CI green — the regressions that bit
+v0.1 → v0.2 → v0.3 are now structurally impossible. The four
+v0.4 features (peak-review state in CSV/Markdown export, real
+matplotlib rendering in the TUI plot panel, `.ibw` v5 read/write,
+and the docs site going live) all ride on top of the new
+infrastructure.
+
+**Install**
+
+```bash
+pip install "afmkit @ git+https://github.com/linjiema/afmkit.git@v0.4.0"
+```
+
+Optional extras:
+
+```bash
+pip install "afmkit[igor] @ ..."      # Igor .ibw round-trip
+pip install "afmkit[gui] @ ..."      # Textual TUI
+pip install "afmkit[plot] @ ..."     # matplotlib panel inside the TUI
+pip install "afmkit[parquet] @ ..."  # pyarrow Parquet export
+```
 
 ### Added
 
-- **Peak review state plumbed through `to_csv_fits` and `to_markdown`**.
-  The first v0.4 task. `to_csv_fits(fits, path, *, reviewers=None)` and
+- **Peak review state plumbed through `to_csv_fits` and
+  `to_markdown`**. `to_csv_fits(fits, path, *, reviewers=None)` and
   `to_markdown(batch, fits, path, *, reviewers=None)` now accept a
-  `{curve_index: PeakReviewer}` mapping. When `reviewers` is provided,
-  the CSV output switches to one row per (curve, peak) with the fit
-  columns repeated and the per-peak columns appended (`curve_index`,
-  `peak_index`, `extension_nm`, `force_pN`, `manual_force_pN`,
-  `accepted`, `confidence`, `prominence_pN`, `width_points`,
-  `height_drop_pN`, `note`). The Markdown output gets a new
-  `## Peak review` section after `## Fit results`, with one row per
-  peak. The legacy one-row-per-fit shape is preserved when `reviewers`
-  is `None` (the default), so v0.1 → v0.3 callers are unaffected.
-  Curves with a reviewer but zero peaks get a single empty row; curves
-  without a reviewer entry still get a row so every fit is represented.
+  `{curve_index: PeakReviewer}` mapping. When `reviewers` is
+  provided, the CSV output switches to one row per (curve, peak)
+  with the fit columns repeated and the per-peak columns appended
+  (`curve_index`, `peak_index`, `extension_nm`, `force_pN`,
+  `manual_force_pN`, `accepted`, `confidence`, `prominence_pN`,
+  `width_points`, `height_drop_pN`, `note`). The Markdown output
+  gets a new `## Peak review` section after `## Fit results`, with
+  one row per peak. The legacy one-row-per-fit shape is preserved
+  when `reviewers` is `None` (the default), so v0.1 → v0.3 callers
+  are unaffected. Curves with a reviewer but zero peaks get a
+  single empty row; curves without a reviewer entry still get a
+  row so every fit is represented.
 
-- **Real matplotlib plot in the TUI plot panel**. The v0.3 plot panel
+- **Real matplotlib in the TUI plot panel**. The v0.3 plot panel
   was a `Static` widget that only ever showed a textual summary
   ("plot: curve 3 + 5 reviewed peak(s) + WLC fit p=0.41 nm"); the
-  matplotlib figure rendered by `ForceExtensionPlot.render_curve` was
-  thrown away because the v0.3 code path didn't have a Textual
-  Console to drop the renderable into. v0.4 replaces the `Static`
-  with a `Container` that holds the actual `ForceExtensionPlot`
-  widget, mounted once in `compose()`. `_render_plot` now calls
-  `render_curve` on the mounted widget — the half-block image
-  actually shows up in the TUI. When the `[plot]` extra is not
-  installed, the container holds a `Static` fallback with the
-  install hint; either way the `#plot-panel` id is preserved so
-  the toggle / render paths don't have to branch.
+  matplotlib figure rendered by `ForceExtensionPlot.render_curve`
+  was thrown away because the v0.3 code path didn't have a
+  Textual Console to drop the renderable into. v0.4 replaces the
+  `Static` with a `Container` that holds the actual
+  `ForceExtensionPlot` widget, mounted once in `compose()`.
+  `_render_plot` now calls `render_curve` on the mounted widget —
+  the half-block image actually shows up in the TUI. When the
+  `[plot]` extra is not installed, the container holds a `Static`
+  fallback with the install hint; either way the `#plot-panel` id
+  is preserved so the toggle / render paths don't have to branch.
 
 - **`.ibw` v5 read + write**. The v0.3 writer was v2-only (the
-  upstream `igor==0.3` package's `save()` raises `NotImplementedError`,
-  so we wrote a stdlib-only v2 emitter). v0.4 adds a v5 write path
-  — `save_ibw(curve, path, *, version=5)` — and the v0.3 reader
-  already accepted v5 via the upstream `igor.binarywave.load`.
-  v5 is the modern Igor Pro 6.00+ layout (`WAVE_HEADER5` = 320 B,
-  `BIN_HEADER5` = 62 B, ``=`` byte order, ``P`` → ``I`` pointer
-  substitution) and is required by Igor Pro 7+ for waves that
-  reference text or extended dimension units. The v2 path stays
-  the default for back-compat; the round-trip is identical
-  between the two versions for the (ext, force) pairs afmkit
-  emits. 7 new tests in `test_igor_ibw.py` cover the v5 path:
-  round-trip preserves (ext, force) and k_cantilever, the
-  31-char v5 bname holds long source filenames, the v5 wave
-  header carries the right `type` / `dataUnits` / `dimUnits[0]`
-  / `sfA` / `sfB` / `fsValid` / `topFullScale` / `botFullScale`
-  fields, the v2 and v5 files produce equivalent curves, and
-  `save_ibw(..., version=3)` (or any other non-{2,5}) raises
-  `ValueError`.
+  upstream `igor==0.3` package's `save()` raises
+  `NotImplementedError`, so we wrote a stdlib-only v2 emitter).
+  v0.4 adds a v5 write path — `save_ibw(curve, path, *,
+  version=5)` — and the v0.3 reader already accepted v5 via the
+  upstream `igor.binarywave.load`. v5 is the modern Igor Pro
+  6.00+ layout (`WAVE_HEADER5` = 320 B, `BIN_HEADER5` = 62 B, `=`
+  byte order, `P` → `I` pointer substitution) and is required by
+  Igor Pro 7+ for waves that reference text or extended dimension
+  units. The v2 path stays the default for back-compat; the
+  round-trip is identical between the two versions for the (ext,
+  force) pairs afmkit emits. 7 new tests in `test_igor_ibw.py`
+  cover the v5 path: round-trip preserves (ext, force) and
+  k_cantilever, the 31-char v5 bname holds long source filenames,
+  the v5 wave header carries the right `type` / `dataUnits` /
+  `dimUnits[0]` / `sfA` / `sfB` / `fsValid` / `topFullScale` /
+  `botFullScale` fields, the v2 and v5 files produce equivalent
+  curves, and `save_ibw(..., version=3)` (or any other non-{2,5})
+  raises `ValueError`.
 
-- **Docs site is live at https://linjiema.github.io/afmkit/**. The
-  one-time GitHub UI setup at repo Settings → Pages → Source =
-  "GitHub Actions" is done; the `Docs` workflow's
+- **Docs site is live at https://linjiema.github.io/afmkit/**.
+  The one-time GitHub UI setup at repo Settings → Pages → Source
+  = "GitHub Actions" is done; the `Docs` workflow's
   `actions/deploy-pages@v4` step now succeeds. The current
-  deployment is from the v0.3.0 release commit (0d74b0a8) and
-  shows the Home, Quick start, Migration, Tutorials, API
-  reference, Contributing, and Changelog pages. The v0.3
-  retrospective docs (``git-workflow.md`` and
-  ``release-checklist.md``) are on ``develop`` and will land on
-  the site at the next push to ``main`` (the v0.4 release).
+  deployment is from the v0.3.0 release commit and shows the
+  Home, Quick start, Migration, Tutorials, API reference,
+  Contributing, and Changelog pages. The v0.3 retrospective docs
+  (`git-workflow.md` and `release-checklist.md`) are on `develop`
+  and will land on the site at the next push to `main` (this
+  v0.4 release).
 
 - **`pre-commit` enforced in CI**. The `.pre-commit-config.yaml`
   hooks (general pre-commit-hooks + ruff lint/format + mypy
   `--strict`) now run on every push and PR to `main` and
-  `develop` via a new `pre-commit` job in `.github/workflows/ci.yml`
-  using `pre-commit/action@v3.0.1`. The build job now depends on
-  the pre-commit job too, so a hook failure blocks a release
-  build. The pre-commit config was tightened at the same time:
-  the `blacken-docs` hook was removed (it conflicts with `ruff
-  format`), the `mypy` hook is bumped from v1.10.1 to v2.3.0
-  (the same version CI uses — 1.x flagged the untyped
-  `pluggy.HookimplMarker` decorator on every `@register_loader`
-  / `@register_model` helper in `src/afmkit/plugins.py` as a
-  `[misc] Untyped decorator` false positive, while 2.3.0
-  tolerates it), `numpy` is pinned to `>=1.26,<2.4` in the
-  pre-commit `additional_dependencies` (mirrors the project
-  `dependencies` pin; numpy 2.5+ stubs use PEP 696
-  TypeVar-default and PEP 695 `type` statement syntax that the
-  pre-commit mypy cannot parse, which surfaces as
+  `develop` via a new `pre-commit` job in
+  `.github/workflows/ci.yml` using `pre-commit/action@v3.0.1`.
+  The build job now depends on the pre-commit job too, so a
+  hook failure blocks a release build. The pre-commit config
+  was tightened at the same time: the `blacken-docs` hook was
+  removed (it conflicts with `ruff format`), the `mypy` hook
+  is bumped from v1.10.1 to v2.3.0 (the same version CI uses
+  — 1.x flagged the untyped `pluggy.HookimplMarker` decorator
+  on every `@register_loader` / `@register_model` helper in
+  `src/afmkit/plugins.py` as a `[misc] Untyped decorator`
+  false positive, while 2.3.0 tolerates it), `numpy` is pinned
+  to `>=1.26,<2.4` in the pre-commit `additional_dependencies`
+  (mirrors the project `dependencies` pin; numpy 2.5+ stubs use
+  PEP 696 TypeVar-default and PEP 695 `type` statement syntax
+  that the pre-commit mypy cannot parse, which surfaces as
   `Type statement is only supported in Python 3.12 and greater`
   even on 3.12+ interpreters), and `pluggy`, `typer`, `rich`,
   and `pyarrow` are added to `additional_dependencies` because
   the pre-commit env does not auto-install the project `[dev]`
-  extra (CI gets them transitively through `pytest` /
-  `pip install -e ".[dev]"`). `ruff`'s `--fix` flag was removed
-  so a dirty push fails loud in CI instead of getting silently
-  rewritten. A handful of pre-existing formatting drifts in
-  `docs/migration.md`, `docs/v0.3-roadmap.md`, `README.md`,
+  extra. `ruff`'s `--fix` flag was removed so a dirty push
+  fails loud in CI instead of getting silently rewritten. A
+  handful of pre-existing formatting drifts in `docs/migration.md`,
+  `docs/v0.3-roadmap.md`, `README.md`,
   `src/afmkit/io/jpk_txt.py`, and
   `.github/ISSUE_TEMPLATE/bug_report.md` are swept up here so
   the first CI run starts green.
@@ -116,50 +141,73 @@ v0.4 tag is the next cut.
   dep of `pytest`, so a bare `pip install afmkit` (no
   `[dev]` / `[test]` extras) could resolve to an environment
   where `import afmkit` would fail at the `import pluggy`
-  line the first time the plugin manager was initialised.
-  CI was unaffected because it installs `[dev]` (which
+  line the first time the plugin manager was initialised. CI
+  was unaffected because it installs `[dev]` (which
   transitively pulls `pluggy` via `pytest`), but the missing
   declaration was a footgun for end users. The pre-commit
   hook still lists `pluggy` in `additional_dependencies`
   because pre-commit does not auto-install the project's
   runtime dependencies.
 
-### Process (v0.3 retrospective)
+### Infrastructure
 
-Two process regressions bit the v0.1 → v0.2 → v0.3 cycle: (1) every
-change was pushed directly to `main` instead of through a branch
-model, and (2) the README was never synced on release (it still
-pinned to v0.1.0 after v0.3.0 shipped). The v0.3 retrospective
-fixes both. v0.1 / v0.2 / v0.3 history is left as-is — rewriting
-history would cause more pain than the broken process caused.
-**Future work uses the new workflow.**
+- **v0.3 retrospective** — the workflow doc, the release
+  checklist, and the README sync. Two process regressions
+  bit the v0.1 → v0.2 → v0.3 cycle: (1) every change was
+  pushed directly to `main` instead of through a branch
+  model, and (2) the README was never synced on release (it
+  still pinned to v0.1.0 after v0.3.0 shipped). Both are
+  fixed and structurally impossible from v0.4 onward.
+  - `docs/git-workflow.md` — branch model: `main` (releases
+    only, tagged) / `develop` (daily integration) /
+    `feature/*` / `fix/*` / `chore/*` (short-lived work
+    branches). Conventional Commits with a top-level
+    subpackage as scope, one commit per logical change,
+    squash-merge for develop PRs, non-squash for release
+    and hotfix PRs against `main`.
+  - `docs/release-checklist.md` — the pre-flight /
+    paperwork / local-gates / CI-gates / tag-and-release /
+    post-release flow. The "skipping the README sync"
+    anti-pattern is called out as the most-burned-us
+    mistake.
+  - README sync to v0.3.0 happened in PR #1 (retroactive
+    paperwork pass) and is now an explicit checklist item
+    in the release flow.
+- 414 unit + 12 doctest tests pass on every cell of the CI
+  matrix (3 OS × 3 Python), up from 380 + 12 doctest in
+  v0.3.0. The 34-test delta is split: 11 from the CSV /
+  Markdown plumbing (v0.4 #1), 4 from the real-matplotlib
+  TUI plot panel (v0.4 #2), 7 from the `.ibw` v5 path
+  (v0.4 #3), and the rest from the docs / workflow /
+  pre-commit config plumbing.
 
-- **Git workflow** — `docs/git-workflow.md`. Branch model: `main`
-  (releases only, tagged) / `develop` (daily integration) /
-  `feature/*` / `fix/*` / `chore/*` (short-lived work branches).
-  Conventional Commits with a top-level subpackage as scope, one
-  commit per logical change, squash-merge by default. Hotfixes cut
-  off `main`, non-squash merge, then back-merge to `develop`.
-- **Release checklist** — `docs/release-checklist.md`. The
-  pre-flight / paperwork / local-gates / CI-gates / tag-and-release
-  / post-release flow. The "skipping the README sync" anti-pattern
-  is called out as the most-burned-us mistake.
-- **README sync to v0.3.0** — install pinned to `v0.3.0`; Features
-  list reflects v0.3 scope (WLC + eWLC + FJC, peak detection,
-  PeakReviewer, Igor .ibw round-trip, Textual TUI, plot widget,
-  pluggy entry-point); "Try it in 30 seconds" uses the TUI +
-  peak-review workflow; "Verified on" table reflects the 3 OS ×
-  3 Python green matrix.
+### Known limitations (v0.5+ roadmap)
 
-### Known limitations (v0.4 candidates)
-
-Carried over from v0.3's Known limitations, in priority order:
-
-- The docs site is live at https://linjiema.github.io/afmkit/ but
-  the v0.3 retrospective docs (``git-workflow.md`` and
-  ``release-checklist.md``) are not on ``main`` yet — they live
-  on ``develop`` from PR #1. They will appear on the site after
-  the next push to ``main`` (the v0.4 release).
+- **`.ibw` v5 reader improvements** — the v0.4 reader still
+  delegates to the upstream `igor.binarywave.load` for v5.
+  A stdlib-only v5 reader (matching the v2 / v5 writer
+  pattern) would let us drop the `igor` runtime dep for the
+  read path too, and would let us test the v5 round-trip
+  byte-by-byte instead of via the upstream black box.
+- **Matplotlib TUI plot panel native image** — the v0.4
+  plot panel renders the matplotlib figure as a half-block
+  text image via `rich.Console`. A native image render via
+  the Textual image protocol (Sixel / Kitty / iTerm
+  graphics) would be sharper and faster on terminals that
+  support it. The half-block path is the v0.4 default
+  because it works everywhere.
+- **PeakReviewer export plumbing for `.mat` / Parquet** —
+  the v0.4 CSV / Markdown export picks up the per-peak
+  reviewer state. `to_mat` and `to_parquet` still emit a
+  one-row-per-fit shape; plumbing the reviewer through those
+  is the symmetric v0.5 task.
+- **FJC reading from the `.ibw` writer's 2-col layout** —
+  the v0.4 `.ibw` writer emits a 2-column wave (ext, force)
+  with an `afmkit=2col` note. The reader does not yet
+  reconstruct the `ForceCurve` directly from the note;
+  callers still need to know to pass `k_cantilever`
+  explicitly. A round-trip helper that reads the note and
+  re-hydrates the `ForceCurve` is the v0.5 piece.
 
 ## [0.3.0] — 2026-07-30
 
@@ -292,6 +340,8 @@ pip install "afmkit @ git+https://github.com/linjiema/afmkit.git@v0.1.0"
 - Automated sawtooth peak detection is v0.2.
 - GUI is v0.2.
 
-[Unreleased]: https://github.com/linjiema/afmkit/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/linjiema/afmkit/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/linjiema/afmkit/releases/tag/v0.4.0
+[0.3.0]: https://github.com/linjiema/afmkit/releases/tag/v0.3.0
 [0.2.0]: https://github.com/linjiema/afmkit/releases/tag/v0.2.0
 [0.1.0]: https://github.com/linjiema/afmkit/releases/tag/v0.1.0

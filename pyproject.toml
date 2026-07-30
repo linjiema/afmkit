@@ -9,7 +9,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "afmkit"
-version = "0.3.0"
+version = "0.4.0"
 description = "Modern Python toolkit for single-molecule force spectroscopy data analysis."
 readme = "README.md"
 requires-python = ">=3.11"

@@ -21,13 +21,13 @@ peaks, and exports the results in formats that drop straight into
 The goal is a tool a grad student can use from a notebook **and** a lab can
 build a reproducible pipeline on top of.
 
-> **Install from GitHub** — afmkit is not on PyPI. Pin a tag (`@v0.3.0`)
+> **Install from GitHub** — afmkit is not on PyPI. Pin a tag (`@v0.4.0`)
 > for reproducibility, or `@main` for the bleeding edge. See
-> [What's new in v0.3.0](https://github.com/linjiema/afmkit/releases/tag/v0.3.0).
+> [What's new in v0.4.0](https://github.com/linjiema/afmkit/releases/tag/v0.4.0).
 
 ---
 
-## ✨ Features (v0.3.0)
+## ✨ Features (v0.4.0)
 
 ### Reading and writing
 
@@ -38,9 +38,13 @@ build a reproducible pipeline on top of.
   batches supported. `save_hdf5` / `load_hdf5` round-trip.
 - 🔁 **Igor `.ibw` round-trip** (optional `[igor]` extra) — `load_ibw`,
   `load_ibw_batch`, `save_ibw`. F/B files in the same folder are paired
-  as approach/retract by basename. The writer is a stdlib-only v2 binary
-  emitter (the released `igor==0.3` PyPI package's `save()` is still
-  `NotImplementedError` upstream).
+  as approach/retract by basename. The writer is stdlib-only and
+  supports both v2 (default, for back-compat) and v5 (Igor Pro 6.00+,
+  required by Igor Pro 7+ for waves that reference text or extended
+  dimension units) via `save_ibw(curve, path, *, version=2|5)`. The
+  released `igor==0.3` PyPI package's `save()` is still
+  `NotImplementedError` upstream, which is why afmkit ships its own
+  writer.
 - 📊 **Exporters** — wide-column CSV (Origin / Matlab friendly), `.mat`
   v5, Parquet (pyarrow / fastparquet), Markdown, and a native HDF5
   round-trip.
@@ -87,7 +91,9 @@ build a reproducible pipeline on top of.
   No X server, no PySide6 — runs in any terminal over SSH.
 - 🖼️ **Matplotlib plot widget** — `ForceExtensionPlot` renders a
   force-extension curve with optional peak markers and WLC fit overlay
-  via the matplotlib Agg backend, mounted inside the TUI panel.
+  via the matplotlib Agg backend, mounted inside the TUI panel
+  (v0.4: the half-block image actually shows up in the TUI now;
+  v0.3 was a text summary).
 - 💻 **CLI** — `afmkit version / info / import / fit / export / gui`
   subcommands (typer + rich), end-to-end wired.
 
@@ -96,7 +102,7 @@ build a reproducible pipeline on top of.
 ## 🚀 Quick start
 
 ```bash
-pip install "afmkit[all] @ git+https://github.com/linjiema/afmkit.git@v0.3.0"
+pip install "afmkit[all] @ git+https://github.com/linjiema/afmkit.git@v0.4.0"
 ```
 
 The `[all]` extra pulls in `[io,parquet,igor,matlab,plot,gui]` — everything
@@ -104,10 +110,10 @@ the headline workflows need. Drop it for a minimal install and add extras
 on demand:
 
 ```bash
-pip install "afmkit @ git+https://github.com/linjiema/afmkit.git@v0.3.0"           # core only
-pip install "afmkit[igor] @ git+https://github.com/linjiema/afmkit.git@v0.3.0"    # .ibw round-trip
-pip install "afmkit[gui]  @ git+https://github.com/linjiema/afmkit.git@v0.3.0"    # Textual TUI
-pip install "afmkit[plot] @ git+https://github.com/linjiema/afmkit.git@v0.3.0"    # matplotlib panel
+pip install "afmkit @ git+https://github.com/linjiema/afmkit.git@v0.4.0"           # core only
+pip install "afmkit[igor] @ git+https://github.com/linjiema/afmkit.git@v0.4.0"    # .ibw round-trip
+pip install "afmkit[gui]  @ git+https://github.com/linjiema/afmkit.git@v0.4.0"    # Textual TUI
+pip install "afmkit[plot] @ git+https://github.com/linjiema/afmkit.git@v0.4.0"    # matplotlib panel
 ```
 
 ### From Python — load, fit, review
@@ -152,7 +158,7 @@ afmkit gui                                       # launch the Textual TUI
 ### Try the TUI in 30 seconds
 
 ```bash
-pip install "afmkit[gui,plot] @ git+https://github.com/linjiema/afmkit.git@v0.3.0"
+pip install "afmkit[gui,plot] @ git+https://github.com/linjiema/afmkit.git@v0.4.0"
 afmkit gui
 # → press `o`, type a directory of JPK .txt files, hit Enter
 # → arrow-keys to a curve, press `f` to fit, `P` to toggle the plot panel
@@ -256,7 +262,7 @@ CI matrix is green on every cell. Local gates are `ruff check` + `ruff format --
 | macos-latest | ✅ | ✅ | ✅ |
 | windows-latest | ✅ | ✅ | ✅ |
 
-Test count: 380 unit + 12 doctest (6 doctest marked `+SKIP` for examples
+Test count: 414 unit + 12 doctest (6 doctest marked `+SKIP` for examples
 that depend on a runtime data folder).
 
 ---
@@ -275,8 +281,9 @@ pytest tests/ -q --doctest-modules src/afmkit
 
 The dev extras pull in `pytest`, `ruff`, `mypy`, `h5py`, `hypothesis`,
 `pre-commit`, the optional `[igor]`, `[gui]`, `[plot]` extras for the
-full test matrix, and the in-tree `pre-commit` hooks (not yet enforced
-in CI; v0.4 plan).
+full test matrix, and the in-tree `pre-commit` hooks (enforced in
+CI since v0.4 — see `.github/workflows/ci.yml` for the `pre-commit`
+job).
 
 ### Working on a change
 
@@ -324,7 +331,7 @@ If afmkit helped your research, please cite it:
 @software{afmkit,
   title = {afmkit: a Python toolkit for single-molecule force spectroscopy},
   url = {https://github.com/linjiema/afmkit},
-  version = {0.3.0},
+  version = {0.4.0},
   year = {2026},
 }
 ```
