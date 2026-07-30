@@ -28,9 +28,19 @@ register new formats via the ``afmkit.loaders`` entry point — see
 from __future__ import annotations
 
 from afmkit.io.hdf5_store import HDF5Store, load_hdf5, save_hdf5
+from afmkit.io.igor_ibw import (
+    IgorIBWLoader,
+    load_ibw,
+    load_ibw_batch,
+    save_ibw,
+)
 
 __all__ = [
     "HDF5Store",
+    "IgorIBWLoader",
     "load_hdf5",
+    "load_ibw",
+    "load_ibw_batch",
     "save_hdf5",
+    "save_ibw",
 ]
