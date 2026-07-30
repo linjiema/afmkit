@@ -6,8 +6,56 @@ and the format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1
 
 ## [Unreleased]
 
-Nothing yet. The next batch will land with v0.4 (or whatever — see
-v0.3's "Known limitations" for the candidates).
+The v0.3 retrospective process fix is in this section; it lands on
+`develop` with the PR that introduced the workflow rules (no separate
+v0.3.1 paperwork-pass release). New feature work will pile on top; the
+v0.4 tag is the next cut.
+
+### Process (v0.3 retrospective)
+
+Two process regressions bit the v0.1 → v0.2 → v0.3 cycle: (1) every
+change was pushed directly to `main` instead of through a branch
+model, and (2) the README was never synced on release (it still
+pinned to v0.1.0 after v0.3.0 shipped). The v0.3 retrospective
+fixes both. v0.1 / v0.2 / v0.3 history is left as-is — rewriting
+history would cause more pain than the broken process caused.
+**Future work uses the new workflow.**
+
+- **Git workflow** — `docs/git-workflow.md`. Branch model: `main`
+  (releases only, tagged) / `develop` (daily integration) /
+  `feature/*` / `fix/*` / `chore/*` (short-lived work branches).
+  Conventional Commits with a top-level subpackage as scope, one
+  commit per logical change, squash-merge by default. Hotfixes cut
+  off `main`, non-squash merge, then back-merge to `develop`.
+- **Release checklist** — `docs/release-checklist.md`. The
+  pre-flight / paperwork / local-gates / CI-gates / tag-and-release
+  / post-release flow. The "skipping the README sync" anti-pattern
+  is called out as the most-burned-us mistake.
+- **README sync to v0.3.0** — install pinned to `v0.3.0`; Features
+  list reflects v0.3 scope (WLC + eWLC + FJC, peak detection,
+  PeakReviewer, Igor .ibw round-trip, Textual TUI, plot widget,
+  pluggy entry-point); "Try it in 30 seconds" uses the TUI +
+  peak-review workflow; "Verified on" table reflects the 3 OS ×
+  3 Python green matrix.
+
+### Known limitations (v0.4 candidates)
+
+Carried over from v0.3's Known limitations, in priority order:
+
+- `PeakReviewer.to_dict()` exists but `to_csv_fits` / `to_markdown`
+  don't yet plumb the per-peak accept / reject / manual_force state
+  into the per-fit CSV. The first v0.4 task.
+- The plot panel currently shows a textual summary
+  ("plot: curve 3 + 5 reviewed peak(s) + WLC fit p=0.41 nm") rather
+  than rendering the actual matplotlib image into the panel. A real
+  matplotlib-in-Textual widget is a v0.4 story.
+- `.ibw` v5 read / write (v0.3 has the v2 writer only).
+- The `Docs` workflow's `Deploy to GitHub Pages` step needs the
+  one-time GitHub UI action at repo Settings → Pages → Source =
+  "GitHub Actions". Until that's done, the `Docs` job's deploy
+  step fails (the build itself still succeeds and produces a
+  `site/` artifact).
+- `pre-commit` not yet enforced in CI.
 
 ## [0.3.0] — 2026-07-30
 
