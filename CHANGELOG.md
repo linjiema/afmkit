@@ -62,6 +62,17 @@ v0.4 tag is the next cut.
   `save_ibw(..., version=3)` (or any other non-{2,5}) raises
   `ValueError`.
 
+- **Docs site is live at https://linjiema.github.io/afmkit/**. The
+  one-time GitHub UI setup at repo Settings → Pages → Source =
+  "GitHub Actions" is done; the `Docs` workflow's
+  `actions/deploy-pages@v4` step now succeeds. The current
+  deployment is from the v0.3.0 release commit (0d74b0a8) and
+  shows the Home, Quick start, Migration, Tutorials, API
+  reference, Contributing, and Changelog pages. The v0.3
+  retrospective docs (``git-workflow.md`` and
+  ``release-checklist.md``) are on ``develop`` and will land on
+  the site at the next push to ``main`` (the v0.4 release).
+
 ### Process (v0.3 retrospective)
 
 Two process regressions bit the v0.1 → v0.2 → v0.3 cycle: (1) every
@@ -93,11 +104,11 @@ history would cause more pain than the broken process caused.
 
 Carried over from v0.3's Known limitations, in priority order:
 
-- The `Docs` workflow's `Deploy to GitHub Pages` step needs the
-  one-time GitHub UI action at repo Settings → Pages → Source =
-  "GitHub Actions". Until that's done, the `Docs` job's deploy
-  step fails (the build itself still succeeds and produces a
-  `site/` artifact).
+- The docs site is live at https://linjiema.github.io/afmkit/ but
+  the v0.3 retrospective docs (``git-workflow.md`` and
+  ``release-checklist.md``) are not on ``main`` yet — they live
+  on ``develop`` from PR #1. They will appear on the site after
+  the next push to ``main`` (the v0.4 release).
 - `pre-commit` not yet enforced in CI.
 
 ## [0.3.0] — 2026-07-30
