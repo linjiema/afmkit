@@ -273,9 +273,15 @@ ignore_missing_imports = true
 # we don't ship stubs for the small surface area the TUI uses
 # (App, ModalScreen, DataTable, Input, Footer, Header, Container,
 # Vertical). The runtime check `pytest.importorskip("textual")`
-# keeps it out of the default test path anyway.
+# keeps it out of the default test path anyway. We also turn off
+# ``misc`` for textual because its runtime classes surface as
+# ``Any`` in mypy's view (the partial py.typed marker does not
+# expose ``App`` / ``ModalScreen`` as a subclassable class) and
+# the resulting "Class cannot subclass value of type Any" is a
+# false positive that does not actually flag a real bug.
 module = "textual.*"
 ignore_missing_imports = true
+disable_error_code = ["misc"]
 
 # =============================================================================
 # pytest
