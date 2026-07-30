@@ -15,6 +15,7 @@ A clear and concise description of what the bug is.
 ```python
 # Minimal code snippet that triggers the bug
 import afmkit
+
 ...
 ```
 

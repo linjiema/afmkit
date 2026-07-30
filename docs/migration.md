@@ -43,7 +43,9 @@ import itertools as it
 from afmkit.io.jpk_txt import load_jpk_txt
 from afmkit.core.curve import CurveBatch
 
-batches = [load_jpk_txt(p, k_cantilever=0.06) for p in sorted(Path("data").glob("*.txt"))]
+batches = [
+    load_jpk_txt(p, k_cantilever=0.06) for p in sorted(Path("data").glob("*.txt"))
+]
 batch = CurveBatch(
     it.chain.from_iterable(batches),
     name="data",
@@ -94,7 +96,9 @@ from afmkit.io.exporters import to_csv
 # → CurveBatch of ForceCurve, each with metadata={"source_file", "k_cantilever", "direction"}.
 batch = load_jpk_txt("data/curve_001.txt", k_cantilever=0.06)
 approach = batch[0]  # first direction="approach" curve
-print(approach)  # ForceCurve(n_points=2000, ext=[0.0, 199.5] nm, F=[0.1, 65.4] pN, k=0.06)
+print(
+    approach
+)  # ForceCurve(n_points=2000, ext=[0.0, 199.5] nm, F=[0.1, 65.4] pN, k=0.06)
 
 # 2. The "cursor A to B as fit range" is now an extension window.
 #    Pick a 130 nm window centred on the elastic regime, away from the
@@ -164,11 +168,11 @@ afmkit packages these together with metadata in a single object:
 from afmkit.core.curve import ForceCurve
 
 curve = ForceCurve(
-    extension=extension_array,    # nm
-    force=force_array,            # pN
+    extension=extension_array,  # nm
+    force=force_array,  # pN
     metadata={
-        "k_cantilever": 0.1,      # pN/nm
-        "temperature": 298.0,     # K
+        "k_cantilever": 0.1,  # pN/nm
+        "temperature": 298.0,  # K
         "source_file": "trace_001.txt",
         "direction": "approach",  # or "retract"
         "sampling_rate_hz": 5000.0,
@@ -428,6 +432,7 @@ Until the two are unified, bridge across with one explicit copy:
 from afmkit.fitting import fit
 from afmkit.io.exporters import FitResult, to_csv_fits, to_markdown
 
+
 # `fit_result` is afmkit.fitting.FitResult; `exported` is the
 # afmkit.io.exporters.FitResult that the exporters want.
 def to_exporters(fit_result):
@@ -442,6 +447,7 @@ def to_exporters(fit_result):
         x=fit_result.x_fit,
         y=fit_result.y_fit,
     )
+
 
 fits = [fit(c, model="wlc", x_range=(20, 180)) for c in batch]
 to_csv_fits([to_exporters(r) for r in fits], "fits.csv")
