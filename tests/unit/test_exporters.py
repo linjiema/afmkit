@@ -26,6 +26,8 @@ import pandas as pd
 import pytest
 import scipy.io
 
+from afmkit.analysis.peak_detection import Peak
+from afmkit.analysis.peak_review import PeakReviewer
 from afmkit.core.curve import CurveBatch, ForceCurve
 from afmkit.io.exporters import (
     FitResult,
@@ -251,6 +253,173 @@ class TestToCsvFits:
             to_csv_fits([], tmp_path / "nope.csv")
 
 
+# -- to_csv_fits with reviewers ------------------------------------------
+
+
+def _make_reviewer(
+    n_peaks: int = 3,
+    *,
+    reject_indices: tuple[int, ...] = (),
+    override: dict[int, float] | None = None,
+    notes: dict[int, str] | None = None,
+) -> PeakReviewer:
+    """Build a synthetic :class:`PeakReviewer` for export tests.
+
+    The peaks are evenly spaced at 50, 100, 150, … nm. ``reject_indices``
+    are turned into rejected peaks (still present in the list, just
+    ``accepted=False``). ``override`` keys are peak indices to apply a
+    user-override force to. ``notes`` keys are peak indices to attach a
+    free-form note to. The reviewer is bound to a small synthetic
+    :class:`ForceCurve` (the actual data is irrelevant for export
+    tests — only the review state matters).
+    """
+    ext_axis = np.linspace(0.0, 400.0, 401)
+    force_axis = np.full(401, 5.0)
+    curve = ForceCurve(ext_axis, force_axis, metadata={"k_cantilever": 0.1})
+    peaks = [
+        Peak(
+            index=i,
+            extension=50.0 * (i + 1),
+            force=20.0 + i,
+            prominence=15.0,
+            width=5,
+            height_drop=8.0,
+            confidence=0.6 + 0.05 * i,
+        )
+        for i in range(n_peaks)
+    ]
+    reviewer = PeakReviewer(peaks, curve)
+    for idx in reject_indices:
+        reviewer.reject(idx)
+    if override:
+        for idx, force in override.items():
+            reviewer.override(idx, force)
+    if notes:
+        for idx, note in notes.items():
+            reviewer.set_note(idx, note)
+    return reviewer
+
+
+class TestToCsvFitsWithReviewers:
+    """``to_csv_fits`` with ``reviewers`` switches to one row per (curve, peak)."""
+
+    def test_one_row_per_peak_when_reviewers_provided(self, tmp_path: Path) -> None:
+        fits = [_make_fit(p=0.40, lc=200.0), _make_fit(p=0.42, lc=198.0)]
+        reviewers = {
+            0: _make_reviewer(n_peaks=3),
+            1: _make_reviewer(n_peaks=2),
+        }
+        p = tmp_path / "fits_with_peaks.csv"
+
+        to_csv_fits(fits, p, reviewers=reviewers)
+
+        df = pd.read_csv(p)
+        # 3 + 2 = 5 peak rows.
+        assert len(df) == 5
+        # Every row has the fit columns AND the peak columns.
+        for col in [
+            "model",
+            "chi_square",
+            "p",
+            "L",
+            "curve_index",
+            "peak_index",
+            "extension_nm",
+            "force_pN",
+            "manual_force_pN",
+            "accepted",
+        ]:
+            assert col in df.columns, f"missing column: {col}"
+        # curve_index groups match the input mapping.
+        assert list(df["curve_index"]) == [0, 0, 0, 1, 1]
+        # peak_index is contiguous within each curve.
+        assert list(df["peak_index"]) == [0, 1, 2, 0, 1]
+
+    def test_per_peak_manual_force_and_accepted_round_trip(self, tmp_path: Path) -> None:
+        fits = [_make_fit()]
+        reviewer = _make_reviewer(
+            n_peaks=3,
+            reject_indices=(1,),  # peak 1 is rejected
+            override={0: 42.5},  # peak 0 is overridden
+            notes={2: "doublet, suspicious"},
+        )
+        p = tmp_path / "review_round_trip.csv"
+
+        to_csv_fits(fits, p, reviewers={0: reviewer})
+
+        df = pd.read_csv(p)
+        assert len(df) == 3
+        # Peak 0: accepted, manual_force set.
+        row0 = df.iloc[0]
+        assert bool(row0["accepted"]) is True
+        assert float(row0["manual_force_pN"]) == 42.5
+        # Peak 1: rejected, no override.
+        row1 = df.iloc[1]
+        assert bool(row1["accepted"]) is False
+        # pandas reads empty cells as NaN for numeric columns; the
+        # writer emits "" for manual_force_pN, which pandas reads as
+        # NaN. Check the round-trip loosely.
+        assert pd.isna(row1["manual_force_pN"])
+        # Peak 2: accepted, note attached.
+        row2 = df.iloc[2]
+        assert bool(row2["accepted"]) is True
+        assert str(row2["note"]) == "doublet, suspicious"
+
+    def test_curve_with_empty_reviewer_emits_one_row(self, tmp_path: Path) -> None:
+        fits = [_make_fit(), _make_fit(p=0.5)]
+        ext_axis = np.linspace(0.0, 400.0, 401)
+        empty_curve = ForceCurve(ext_axis, np.zeros(401), metadata={"k_cantilever": 0.1})
+        reviewers = {
+            0: _make_reviewer(n_peaks=2),
+            1: PeakReviewer([], empty_curve),  # no peaks
+        }
+        p = tmp_path / "with_empty_reviewer.csv"
+
+        to_csv_fits(fits, p, reviewers=reviewers)
+
+        df = pd.read_csv(p)
+        # 2 peaks for curve 0 + 1 placeholder row for curve 1.
+        assert len(df) == 3
+        # The placeholder row carries curve_index=1.
+        assert list(df["curve_index"]) == [0, 0, 1]
+        # The placeholder row has NaN extension.
+        assert pd.isna(df.iloc[-1]["extension_nm"])
+
+    def test_curve_with_no_reviewer_in_mapping_emits_one_row(self, tmp_path: Path) -> None:
+        fits = [_make_fit(), _make_fit(p=0.5)]
+        # Only curve 0 has a reviewer.
+        reviewers = {0: _make_reviewer(n_peaks=2)}
+        p = tmp_path / "no_reviewer_for_one_curve.csv"
+
+        to_csv_fits(fits, p, reviewers=reviewers)
+
+        df = pd.read_csv(p)
+        # 2 peaks + 1 placeholder = 3 rows total; every fit is represented.
+        assert len(df) == 3
+        assert set(df["curve_index"].tolist()) == {0, 1}
+
+    def test_stray_reviewer_index_raises(self, tmp_path: Path) -> None:
+        fits = [_make_fit()]
+        reviewers = {
+            0: _make_reviewer(n_peaks=2),
+            5: _make_reviewer(n_peaks=1),  # curve 5 has no fit
+        }
+        with pytest.raises(ValueError, match="curve indices not in the fit list"):
+            to_csv_fits(fits, tmp_path / "bad.csv", reviewers=reviewers)
+
+    def test_reviewers_none_keeps_legacy_one_row_per_fit(self, tmp_path: Path) -> None:
+        """The default (no reviewers) keeps the v0.1 → v0.3 shape."""
+        fits = [_make_fit(), _make_fit(p=0.5)]
+        p = tmp_path / "legacy.csv"
+
+        to_csv_fits(fits, p)
+
+        df = pd.read_csv(p)
+        assert len(df) == 2
+        assert "curve_index" not in df.columns
+        assert "peak_index" not in df.columns
+
+
 # -- to_mat --------------------------------------------------------------
 
 
@@ -368,6 +537,79 @@ class TestToMarkdown:
         assert "WLC" in text
         # Per-curve summary should still be present.
         assert "Per-curve summary" in text
+
+
+# -- to_markdown with reviewers ------------------------------------------
+
+
+class TestToMarkdownWithReviewers:
+    """``to_markdown`` with ``reviewers`` appends a Peak review section."""
+
+    def test_peak_review_section_appears_when_reviewers_provided(self, tmp_path: Path) -> None:
+        batch = _make_batch(n_curves=2)
+        fits = [_make_fit(), _make_fit(p=0.42)]
+        reviewers = {0: _make_reviewer(n_peaks=2)}
+        p = tmp_path / "with_review.md"
+
+        to_markdown(batch, fits=fits, path=p, reviewers=reviewers)
+
+        text = p.read_text(encoding="utf-8")
+        # The section header is present.
+        assert "Peak review" in text
+        # Curve index 0 is in the table; peak_index values are present.
+        assert "0 | 0" in text or "| 0 | 0 |" in text
+        assert "0 | 1" in text or "| 0 | 1 |" in text
+        # Curve 1 has no reviewer, so its index is not in the review
+        # table — only the fits table.
+        assert "Fit results" in text
+
+    def test_peak_review_omitted_when_reviewers_none(self, tmp_path: Path) -> None:
+        """The default (no reviewers) keeps the v0.1 → v0.3 report shape."""
+        batch = _make_batch(n_curves=2)
+        p = tmp_path / "no_review.md"
+
+        to_markdown(batch, fits=None, path=p)
+
+        text = p.read_text(encoding="utf-8")
+        assert "Peak review" not in text
+
+    def test_peak_review_yes_no_for_accepted_rejected(self, tmp_path: Path) -> None:
+        batch = _make_batch(n_curves=1)
+        fits = [_make_fit()]
+        reviewer = _make_reviewer(n_peaks=2, reject_indices=(1,))
+        p = tmp_path / "yes_no.md"
+
+        to_markdown(batch, fits=fits, path=p, reviewers={0: reviewer})
+
+        text = p.read_text(encoding="utf-8")
+        # The markdown uses "yes" / "no" for the accept flag, per
+        # the implementation contract.
+        assert "yes" in text
+        assert "no" in text
+
+    def test_empty_reviewer_emits_placeholder_row(self, tmp_path: Path) -> None:
+        batch = _make_batch(n_curves=1)
+        fits = [_make_fit()]
+        ext_axis = np.linspace(0.0, 400.0, 401)
+        empty_curve = ForceCurve(ext_axis, np.zeros(401), metadata={"k_cantilever": 0.1})
+        p = tmp_path / "empty_reviewer.md"
+
+        to_markdown(batch, fits=fits, path=p, reviewers={0: PeakReviewer([], empty_curve)})
+
+        text = p.read_text(encoding="utf-8")
+        # The placeholder text surfaces the empty-reviewer case.
+        assert "(no peaks)" in text
+
+    def test_peak_review_note_round_trips(self, tmp_path: Path) -> None:
+        batch = _make_batch(n_curves=1)
+        fits = [_make_fit()]
+        reviewer = _make_reviewer(n_peaks=2, notes={0: "spike near cantilever jump-off"})
+        p = tmp_path / "note_round_trip.md"
+
+        to_markdown(batch, fits=fits, path=p, reviewers={0: reviewer})
+
+        text = p.read_text(encoding="utf-8")
+        assert "spike near cantilever jump-off" in text
 
 
 # -- export --------------------------------------------------------------

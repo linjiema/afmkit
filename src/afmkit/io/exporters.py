@@ -40,13 +40,16 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 import scipy.io
 
 from afmkit.core.curve import CurveBatch
+
+if TYPE_CHECKING:
+    from afmkit.analysis.peak_review import PeakReviewer
 
 __all__ = [
     "FitResult",
@@ -227,29 +230,73 @@ def to_csv(
 # -- to_csv_fits ---------------------------------------------------------
 
 
+#: Columns emitted by :func:`to_csv_fits` for every peak row when
+#: ``reviewers`` is provided. Mirrors the keys of
+#: :meth:`PeakReviewer.to_dict` with the addition of ``curve_index`` so
+#: the output is joinable back to the per-fit table on
+#: ``(curve_index, peak_index)``.
+_PEAK_REVIEW_COLUMNS: tuple[str, ...] = (
+    "curve_index",
+    "peak_index",
+    "extension_nm",
+    "force_pN",
+    "manual_force_pN",
+    "accepted",
+    "confidence",
+    "prominence_pN",
+    "width_points",
+    "height_drop_pN",
+    "note",
+)
+
+
 def to_csv_fits(
     fits: list[FitResult],
     path: Path | str,
+    *,
+    reviewers: dict[int, PeakReviewer] | None = None,
 ) -> None:
-    """Write a one-row-per-fit CSV.
+    """Write a one-row-per-fit CSV, optionally extended with per-peak review rows.
 
-    Each row contains the model name, the best-fit parameter values
-    (one column per parameter, in the order the parameters first
-    appear across the input list), the parameter standard errors
-    (columns named ``<name>_stderr``), and the goodness-of-fit
-    statistics (``chi_square``, ``reduced_chi_square``, ``n_data``).
+    When ``reviewers`` is ``None`` (the default), the output is one row
+    per fit: the model name, the best-fit parameter values (one
+    column per parameter, in the order the parameters first appear
+    across the input list), the parameter standard errors (columns
+    named ``<name>_stderr``), and the goodness-of-fit statistics
+    (``chi_square``, ``reduced_chi_square``, ``n_data``).
 
     For a batch of WLC fits this yields the column order ``model``,
     ``p``, ``p_stderr``, ``L``, ``L_stderr``, ``chi_square``,
     ``reduced_chi_square``, ``n_data`` — matching the WLC model's
     :attr:`~afmkit.models.wlc.WLCModel.param_names`.
 
+    When ``reviewers`` is provided, the output shape changes:
+    **one row per (curve, peak)** instead of one row per fit. Each
+    row carries the fit's columns (model, params, std-errors,
+    goodness-of-fit) plus the peak columns emitted by
+    :meth:`PeakReviewer.to_dict`. Curves with a reviewer but zero
+    peaks get a single "no peaks" row with all peak columns as
+    empty / NaN. Curves without a reviewer (or with a reviewer
+    missing from the dict) get a single row with the same empty
+    peak columns, so every fit in the input list is still
+    represented.
+
     Parameters
     ----------
     fits
-        List of :class:`~afmkit.fitting.report.FitResult` instances.
+        List of :class:`~afmkit.fitting.report.FitResult` instances,
+        in curve-index order.
     path
         Destination file path.
+    reviewers
+        Optional ``{curve_index: PeakReviewer}`` mapping. When
+        provided, the per-peak accept / reject / manual_force / note
+        state flows into the output. The mapping is keyed by the
+        0-based curve index (``fits[i]`` corresponds to
+        ``reviewers[i]``). Curve indices that have a fit but no
+        reviewer entry get a row with empty peak columns. Curve
+        indices in the mapping without a corresponding fit raise
+        :class:`ValueError`.
     """
     if not fits:
         raise ValueError("Cannot export an empty list of fits")
@@ -263,6 +310,18 @@ def to_csv_fits(
             if name not in all_params:
                 all_params.append(name)
 
+    if reviewers is None:
+        _write_per_fit_csv(fits, all_params, Path(path))
+    else:
+        _write_per_peak_csv(fits, all_params, reviewers, Path(path))
+
+
+def _write_per_fit_csv(
+    fits: list[FitResult],
+    all_params: list[str],
+    path: Path,
+) -> None:
+    """Write the legacy one-row-per-fit CSV (the v0.1 → v0.3 shape)."""
     rows: list[dict[str, Any]] = []
     for fit in fits:
         # The exporters accept both the new (afmkit.fitting.report)
@@ -288,7 +347,123 @@ def to_csv_fits(
         rows.append(row)
 
     df = pd.DataFrame(rows)
-    df.to_csv(Path(path), index=False)
+    df.to_csv(path, index=False)
+
+
+def _write_per_peak_csv(
+    fits: list[FitResult],
+    all_params: list[str],
+    reviewers: dict[int, PeakReviewer],
+    path: Path,
+) -> None:
+    """Write the per-peak CSV (the v0.4+ shape when ``reviewers`` is set).
+
+    Every input fit contributes at least one row. A fit whose
+    curve index has a reviewer with at least one peak contributes
+    one row per peak. A fit whose curve index has a reviewer with
+    zero peaks, or no reviewer at all, contributes a single row
+    with the peak columns empty.
+    """
+    rows: list[dict[str, Any]] = []
+    for curve_idx, fit in enumerate(fits):
+        fit_cols = _fit_columns(fit, all_params)
+        reviewer = reviewers.get(curve_idx)
+        if reviewer is None or len(reviewer) == 0:
+            # No peaks to emit — but the fit still gets a row, with
+            # the peak columns empty so the per-fit shape is
+            # preserved.
+            row = dict(fit_cols)
+            row["curve_index"] = curve_idx
+            for col in _PEAK_REVIEW_COLUMNS[1:]:
+                row[col] = _empty_peak_value(col)
+            rows.append(row)
+            continue
+        for peak_dict in reviewer.to_dict():
+            row = dict(fit_cols)
+            row["curve_index"] = curve_idx
+            # Map the to_dict() keys onto the v0.4 CSV column names
+            # (units-suffixed for clarity when the file is opened in
+            # Excel / Origin).
+            row["peak_index"] = int(peak_dict["index"])
+            row["extension_nm"] = float(peak_dict["extension"])
+            row["force_pN"] = float(peak_dict["force"])
+            row["manual_force_pN"] = (
+                float(peak_dict["manual_force"]) if peak_dict["manual_force"] is not None else ""
+            )
+            row["accepted"] = bool(peak_dict["accepted"])
+            row["confidence"] = float(peak_dict["confidence"])
+            row["prominence_pN"] = float(peak_dict["prominence"])
+            row["width_points"] = int(peak_dict["width"])
+            row["height_drop_pN"] = float(peak_dict["height_drop"])
+            row["note"] = str(peak_dict["note"])
+            rows.append(row)
+
+    # Validate the mapping: any reviewer with a curve_index beyond
+    # the fit list is almost certainly a user error. Surface it now
+    # with a clear message.
+    stray = [i for i in reviewers if i >= len(fits) or i < -len(fits)]
+    if stray:
+        raise ValueError(
+            f"reviewers mapping has entries for curve indices not in the "
+            f"fit list: {sorted(stray)} (fit list has {len(fits)} entries)"
+        )
+
+    df = pd.DataFrame(rows)
+    df.to_csv(path, index=False)
+
+
+def _fit_columns(fit: FitResult, all_params: list[str]) -> dict[str, Any]:
+    """Build the per-fit column block shared by the per-fit and per-peak writers.
+
+    Pulls the ``stderr`` / ``chi_square`` / ``reduced_chi_square``
+    fields with the same back-compat fallback used in the legacy
+    :func:`to_csv_fits` path, so both writers handle the new
+    :class:`afmkit.fitting.report.FitResult` and the legacy
+    io-side dataclass identically.
+    """
+    stderr = getattr(fit, "stderr", None) or getattr(fit, "param_stderr", {}) or {}
+    chi2 = getattr(fit, "chi_square", None)
+    if chi2 is None:
+        chi2 = getattr(fit, "chi2", float("nan"))
+    redchi = getattr(fit, "reduced_chi_square", None)
+    if redchi is None:
+        redchi = getattr(fit, "redchi", float("nan"))
+
+    out: dict[str, Any] = {
+        "model": fit.model_name,
+        "chi_square": chi2,
+        "reduced_chi_square": redchi,
+        "n_data": fit.n_data,
+    }
+    for name in all_params:
+        out[name] = fit.params.get(name, np.nan)
+        out[f"{name}_stderr"] = stderr.get(name, np.nan)
+    return out
+
+
+def _empty_peak_value(col: str) -> Any:
+    """Return the empty value used for a peak column on a no-peak row.
+
+    Float columns are NaN (pandas will write them as empty cells);
+    the manual_force column is a string-or-float so we use an
+    empty string for consistency with the explicit ``""`` we emit
+    when the peak dict has ``manual_force is None``. The bool
+    column defaults to ``False`` — the convention is "no review
+    yet, so the peak is un-accepted" — but downstream readers
+    should treat the ``curve_index`` row as a fit-only row by
+    checking for NaN / empty values in the peak columns.
+    """
+    if col in ("extension_nm", "force_pN", "prominence_pN", "height_drop_pN", "confidence"):
+        return float("nan")
+    if col in ("width_points", "peak_index"):
+        return -1
+    if col == "manual_force_pN":
+        return ""
+    if col == "accepted":
+        return False
+    if col == "note":
+        return ""
+    return ""
 
 
 # -- to_mat --------------------------------------------------------------
@@ -426,10 +601,12 @@ def to_markdown(
     batch: CurveBatch,
     fits: list[FitResult] | None,
     path: Path | str,
+    *,
+    reviewers: dict[int, PeakReviewer] | None = None,
 ) -> None:
     """Write a human-readable Markdown report of the batch.
 
-    The report contains three sections:
+    The report contains three sections by default:
 
     1. **Batch summary** — name, number of curves, cantilever spring
        constant, and source folder.
@@ -438,6 +615,15 @@ def to_markdown(
     3. **Fit results** (if ``fits`` is provided) — one row per fit,
        with the parameter estimates and the goodness-of-fit
        statistics.
+
+    When ``reviewers`` is provided, a fourth section is appended:
+
+    4. **Peak review** — one row per (curve, peak) with the
+       auto-detected extension / force, the user-override force (if
+       any), the accept / reject flag, the auto-detected
+       confidence, and any free-form note. The table is grouped
+       by curve index so a reader can scan it in the same order
+       the curves appear in the per-curve summary.
 
     Parameters
     ----------
@@ -448,6 +634,12 @@ def to_markdown(
         empty), the fit-results section is omitted.
     path
         Destination file path.
+    reviewers
+        Optional ``{curve_index: PeakReviewer}`` mapping. When
+        provided, a per-peak review table is appended to the
+        report. Same indexing rules as
+        :func:`to_csv_fits` (``reviewers[i]`` corresponds to
+        ``fits[i]`` and ``batch[i]``).
     """
     path = Path(path)
     batch_name = batch.name or "Unnamed"
@@ -517,6 +709,62 @@ def to_markdown(
             row.append(f"{redchi:.4g}")
             row.append(str(fit.n_data))
             lines.append("| " + " | ".join(row) + " |")
+        lines.append("")
+
+    # -- Peak review -------------------------------------------------------
+    if reviewers:
+        lines.append("## Peak review")
+        lines.append("")
+        lines.append(
+            "One row per auto-detected peak. `force` is the post-review "
+            "value (user override if set, else auto-detected). `manual_force` "
+            "is shown only when the user has set an override."
+        )
+        lines.append("")
+        header = [
+            "curve",
+            "peak",
+            "ext (nm)",
+            "force (pN)",
+            "manual_force (pN)",
+            "accepted",
+            "confidence",
+            "prominence (pN)",
+            "width (pts)",
+            "height_drop (pN)",
+            "note",
+        ]
+        lines.append("| " + " | ".join(header) + " |")
+        lines.append("| " + " | ".join(["---"] * len(header)) + " |")
+        for curve_idx in sorted(reviewers):
+            reviewer = reviewers[curve_idx]
+            if len(reviewer) == 0:
+                # Show the curve index with a single placeholder row
+                # so the report reflects the empty-reviewer case.
+                lines.append(f"| {curve_idx} | — | — | — | — | — | — | — | — | — | (no peaks) |")
+                continue
+            for peak_dict in reviewer.to_dict():
+                manual = peak_dict["manual_force"]
+                note = str(peak_dict["note"]) or "—"
+                lines.append(
+                    "| "
+                    + " | ".join(
+                        [
+                            str(curve_idx),
+                            str(int(peak_dict["index"])),
+                            f"{float(peak_dict['extension']):.4g}",
+                            f"{float(peak_dict['force']):.4g}",
+                            (f"{float(manual):.4g}" if manual is not None else "—"),
+                            "yes" if bool(peak_dict["accepted"]) else "no",
+                            f"{float(peak_dict['confidence']):.4g}",
+                            f"{float(peak_dict['prominence']):.4g}",
+                            str(int(peak_dict["width"])),
+                            f"{float(peak_dict['height_drop']):.4g}",
+                            note,
+                        ]
+                    )
+                    + " |"
+                )
         lines.append("")
 
     path.write_text("\n".join(lines), encoding="utf-8")
