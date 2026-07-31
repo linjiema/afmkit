@@ -8,14 +8,28 @@ and the format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1
 
 New feature work piles on top; the v0.6 tag is the next cut.
 
+### Added
+
+- **`.ibw` v5 stdlib-only reader** — `load_ibw` no longer needs
+  the optional `igor` package for v5 files. The v5 path now goes
+  through a small, stdlib + NumPy reader
+  (`_load_ibw_v5_stdlib`) that mirrors the on-disk layout the v5
+  writer emits (BinHeader5 = 62 B, WaveHeader5 = 320 B, both with
+  the `=` / standard-size convention; wData as little-endian
+  float64; note bytes verbatim). The `import igor.binarywave`
+  call is now lazy (`:func:`_get_binarywave`), so
+  `import afmkit.io.igor_ibw` works on a minimal install that
+  doesn't have `igor`. v1 / v2 / v3 reads still delegate to
+  `igor.binarywave.load` and require `afmkit[igor]`. The new
+  `tests/unit/test_igor_ibw_v5_stdlib.py` covers the v5 path
+  end-to-end and verifies the round-trip is **byte-exact**:
+  every header field the writer emits is read back with the same
+  value, including the on-disk `bname`, `dataUnits`, `dimUnits`,
+  `sfA`, `sfB`, `nDim`, `fsValid`, `topFullScale`, `botFullScale`,
+  and the `npnts`-length wData payload.
+
 ### Known limitations (v0.6+ roadmap)
 
-- **`.ibw` v5 reader improvements** — the v0.4 reader still
-  delegates to the upstream `igor.binarywave.load` for v5.
-  A stdlib-only v5 reader (matching the v2 / v5 writer
-  pattern) would let us drop the `igor` runtime dep for the
-  read path too, and would let us test the v5 round-trip
-  byte-by-byte instead of via the upstream black box.
 - **Matplotlib TUI plot panel native image** — the v0.4
   plot panel renders the matplotlib figure as a half-block
   text image via `rich.Console`. A native image render via
