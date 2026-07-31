@@ -110,6 +110,20 @@ from typing import Any
 
 import numpy as np
 
+# ``igor.binarywave`` (v0.3 on PyPI) references ``np.complex`` at import
+# time, which numpy removed in 2.0. Install a compat shim on the numpy
+# module *at afmkit import time* so that ``import igor.binarywave``
+# succeeds whether the call site is afmkit's own :func:`_get_binarywave`
+# (lazy) or an external caller (e.g. ``tests/unit/test_igor_ibw.py``,
+# which uses :func:`igor.binarywave.load` directly to inspect the raw
+# wave note).  Best-effort: any error here is swallowed, so afmkit
+# still loads on environments that have neither numpy nor igor.
+try:
+    if not hasattr(np, "complex"):
+        np.complex = complex  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover - any failure is non-fatal
+    pass
+
 from afmkit.core.curve import CurveBatch, ForceCurve
 
 #: Public re-exports from this module.
@@ -130,10 +144,12 @@ __all__ = ["IgorIBWLoader", "load_ibw", "load_ibw_batch", "save_ibw"]
 # The released package on PyPI (``igor==0.3``) is incompatible with
 # NumPy >= 2.0 at *import* time: ``binarywave.py`` references
 # ``_numpy.complex`` which was removed in NumPy 1.20 and finally errored
-# out in 2.0.  Re-add the alias for the duration of the import so the
-# package can load.  We only install the alias if the real attribute is
-# missing, so future ``igor`` releases that fix this upstream continue
-# to work unmodified.
+# out in 2.0.  The numpy ``complex`` shim is installed at module load
+# (see the top of the file) so any caller of :func:`_get_binarywave`
+# — and any external caller of :func:`igor.binarywave.load` — sees
+# the shimmed numpy.  We only install the alias if the real attribute
+# is missing, so future ``igor`` releases that fix this upstream
+# continue to work unmodified.
 
 
 def _get_binarywave() -> Any:  # pragma: no cover - exercised only when igor is installed
@@ -142,12 +158,14 @@ def _get_binarywave() -> Any:  # pragma: no cover - exercised only when igor is 
     The v1/v2/v3 read paths delegate to :func:`igor.binarywave.load`.
     That import is performed lazily here so that the v5 read path
     (which does not need ``igor``) can run on a minimal install.
+    The ``np.complex`` shim for numpy >= 2.0 is installed at module
+    load time (see the top of this file) so :func:`_get_binarywave`
+    does not have to repeat it.
 
     Returns
     -------
     module
-        The ``igor.binarywave`` module, already monkey-patched with
-        a ``np.complex`` alias if NumPy >= 2.0 dropped it.
+        The ``igor.binarywave`` module.
 
     Raises
     ------
@@ -157,10 +175,6 @@ def _get_binarywave() -> Any:  # pragma: no cover - exercised only when igor is 
         install the missing dependency.
     """
     try:
-        import numpy as _np
-
-        if not hasattr(_np, "complex"):
-            _np.complex = complex  # type: ignore[attr-defined]
         import igor.binarywave
 
         return igor.binarywave
