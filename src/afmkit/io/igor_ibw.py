@@ -4,15 +4,22 @@ This module provides :class:`IgorIBWLoader`, :func:`load_ibw`,
 :func:`load_ibw_batch`, and :func:`save_ibw` for round-tripping force-
 extension data through the legacy Igor Pro binary wave format.
 
-The module's read path uses the optional third-party ``igor`` package
-(``pip install 'afmkit[igor]'`` → ``pip install igor>=0.3``).  The
-package's :func:`igor.binarywave.load` returns a dict that is
-converted into an afmkit :class:`ForceCurve`.  The reader
-handles wave versions 1, 2, 3, and 5.
+The module's read path is **split by wave version**:
+
+  - **v5** is read by a small, stdlib-only (:mod:`struct` + NumPy)
+    loader (:func:`_load_ibw_v5_stdlib`) that mirrors the v5 writer
+    below.  It does **not** require the optional ``igor`` package.
+
+  - **v1, v2, v3** delegate to the optional third-party ``igor``
+    package's :func:`igor.binarywave.load`
+    (``pip install 'afmkit[igor]'`` → ``pip install igor>=0.3``).
+    The import is lazy (see :func:`_get_binarywave`) so that the
+    v5 path stays usable on a minimal install that doesn't include
+    ``igor``.
 
 The module's write path is a small, stdlib-only (:mod:`struct`)
-emitter.  We do not use the upstream library for writing because
-the released ``igor==0.3`` on PyPI ships with
+emitter for both versions.  We do not use the upstream library for
+writing because the released ``igor==0.3`` on PyPI ships with
 :func:`igor.binarywave.save` raising ``NotImplementedError`` and
 several ``pre_pack`` paths unimplemented.  afmkit supports writing
 two wave versions:
@@ -110,29 +117,60 @@ __all__ = ["IgorIBWLoader", "load_ibw", "load_ibw_batch", "save_ibw"]
 
 
 # ---------------------------------------------------------------------------
-# Optional ``igor`` import
+# Optional ``igor`` import — lazy, only for v1/v2/v3 read paths
 # ---------------------------------------------------------------------------
 #
-# ``igor.binarywave.load`` is the loader entry point we delegate to.  The
-# released package on PyPI (``igor==0.3``) is incompatible with NumPy >= 2.0
-# at *import* time: ``binarywave.py`` references ``_numpy.complex`` which
-# was removed in NumPy 1.20 and finally errored out in 2.0.  Re-add the
-# alias for the duration of the import so the package can load.  We only
-# install the alias if the real attribute is missing, so future ``igor``
-# releases that fix this upstream continue to work unmodified.
+# The ``igor.binarywave.load`` entry point is only used for the v1/v2/v3
+# read paths.  v5 reads use the stdlib-only :func:`_load_ibw_v5_stdlib`
+# below and do **not** touch this import.  We keep the ``igor`` import
+# inside :func:`_get_binarywave` so that a minimal install without
+# ``igor`` (which is the v0.6+ default) can still load afmkit and round-
+# trip afmkit-written v5 files.
+#
+# The released package on PyPI (``igor==0.3``) is incompatible with
+# NumPy >= 2.0 at *import* time: ``binarywave.py`` references
+# ``_numpy.complex`` which was removed in NumPy 1.20 and finally errored
+# out in 2.0.  Re-add the alias for the duration of the import so the
+# package can load.  We only install the alias if the real attribute is
+# missing, so future ``igor`` releases that fix this upstream continue
+# to work unmodified.
 
-try:
-    import numpy as _np
 
-    if not hasattr(_np, "complex"):
-        _np.complex = complex  # type: ignore[attr-defined]
-    import igor.binarywave as _binarywave
-except ImportError as _exc:  # pragma: no cover - exercised only without igor
-    raise ImportError(
-        "afmkit.io.igor_ibw requires the optional 'igor' package. "
-        "Install it with `pip install 'afmkit[igor]'` or "
-        "`pip install 'igor>=0.4'`."
-    ) from _exc
+def _get_binarywave() -> Any:  # pragma: no cover - exercised only when igor is installed
+    """Return the ``igor.binarywave`` module, importing it on first use.
+
+    The v1/v2/v3 read paths delegate to :func:`igor.binarywave.load`.
+    That import is performed lazily here so that the v5 read path
+    (which does not need ``igor``) can run on a minimal install.
+
+    Returns
+    -------
+    module
+        The ``igor.binarywave`` module, already monkey-patched with
+        a ``np.complex`` alias if NumPy >= 2.0 dropped it.
+
+    Raises
+    ------
+    ImportError
+        If the optional ``igor`` package is not installed.  The
+        message points to the ``afmkit[igor]`` extra so the user can
+        install the missing dependency.
+    """
+    try:
+        import numpy as _np
+
+        if not hasattr(_np, "complex"):
+            _np.complex = complex  # type: ignore[attr-defined]
+        import igor.binarywave
+
+        return igor.binarywave
+    except ImportError as _exc:
+        raise ImportError(
+            "afmkit.io.igor_ibw: reading v1/v2/v3 .ibw files requires the "
+            "optional 'igor' package (v5 reads are stdlib-only). "
+            "Install it with `pip install 'afmkit[igor]'` or "
+            "`pip install 'igor>=0.4'`."
+        ) from _exc
 
 
 # ---------------------------------------------------------------------------
@@ -556,6 +594,264 @@ def _direction_from_name(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# v5 stdlib-only reader
+# ---------------------------------------------------------------------------
+#
+# A small, stdlib + NumPy reader for v5 (Igor Pro 6.00+) binary waves
+# that mirrors the on-disk layout emitted by :func:`_save_ibw_v5`.  The
+# reader does not require the optional ``igor`` package, so a minimal
+# install without ``afmkit[igor]`` can still round-trip afmkit-written
+# v5 files.
+#
+# The reader returns a dict shaped like
+# :func:`igor.binarywave.load`'s output so the shared post-processing
+# in :meth:`IgorIBWLoader.load` works unchanged for both the
+# stdlib v5 path and the binarywave-delegated v1/v2/v3 path:
+#
+#     {
+#         "wave": {
+#             "wave_header": {...},   # mirrors igor.binarywave keys
+#             "wData": numpy.ndarray, # 1-D float64, length = npnts
+#             "note": bytes,
+#         }
+#     }
+#
+# Only minimal v5 waves are supported (the same shape :func:`_save_ibw_v5`
+# emits): no ``dataEUnits``, no ``dimEUnits``, no ``dimLabels``, no
+# ``sIndices``, no extended-units pointers.  The matching ``*Size``
+# counts in BinHeader5 are therefore always 0 for files afmkit wrote;
+# for v5 files from other tools that do carry those sections, the
+# reader will silently ignore the extra bytes (we don't seek past
+# them) — but the shared post-processing in :meth:`IgorIBWLoader.load`
+# only uses the ``type`` / wave-name / data-units / note fields, so
+# the round-trip semantics still hold for "normal" v5 files.
+
+
+def _load_ibw_v5_stdlib(path: Path) -> dict[str, Any]:
+    """Read a v5 Igor Binary Wave using only the stdlib + NumPy.
+
+    Mirrors the on-disk layout emitted by :func:`_save_ibw_v5`.  The
+    on-disk size of the BinHeader5 (62 B) and WaveHeader5 (320 B) is
+    platform-stable because both headers are packed with the
+    ``=`` (native byte order, *standard* field sizes, no alignment)
+    convention, which is what :mod:`struct.calcsize` resolves to on
+    any host (the standard size of ``l`` / ``L`` / ``I`` is 4 B
+    everywhere under the ``=`` prefix).
+
+    The reader assumes little-endian byte order for the
+    2-byte version, the 2*N float64 ``wData`` payload, and the
+    on-disk ``note``.  This matches the afmkit writer (which uses
+    ``<h`` for the version and emits float64 in native byte order on
+    a little-endian host).  Files written on a big-endian host are
+    not supported by this reader; users with such files should
+    install ``afmkit[igor]`` and let the v1/v2/v3 path handle them.
+
+    Parameters
+    ----------
+    path
+        The ``.ibw`` file to read.
+
+    Returns
+    -------
+    dict
+        A dict shaped like :func:`igor.binarywave.load`'s output,
+        with the keys ``"wave"`` -> ``{"wave_header", "wData",
+        "note"}``.
+
+    Raises
+    ------
+    ValueError
+        If the file is not a v5 wave, if any header / data section
+        is truncated, or if the wave's ``type`` is not ``NT_FP64``.
+    """
+    with path.open("rb") as fh:
+        # 1. 2-byte version.  The afmkit writer uses ``<h``; other
+        # tools' v5 files may use the native byte order, but a v5
+        # reader is overwhelmingly going to be LE on the platforms
+        # we test.  We only fall back to BE on the cheap ``can_load``
+        # sniff; here we trust LE and let the post-processing
+        # surface any inconsistency.
+        version_bytes = fh.read(2)
+        if len(version_bytes) != 2:
+            raise ValueError(
+                f"Igor .ibw file {path}: truncated header "
+                f"(expected 2-byte version, got {len(version_bytes)})."
+            )
+        version = struct.unpack("<h", version_bytes)[0]
+        if version != 5:
+            raise ValueError(
+                f"Igor .ibw file {path}: _load_ibw_v5_stdlib only handles v5, "
+                f"got version={version}."
+            )
+
+        # 2. BinHeader5.
+        bin_bytes = fh.read(_BIN_HEADER5_SIZE)
+        if len(bin_bytes) != _BIN_HEADER5_SIZE:
+            raise ValueError(
+                f"Igor .ibw file {path}: truncated BinHeader5 "
+                f"(got {len(bin_bytes)} of {_BIN_HEADER5_SIZE} bytes)."
+            )
+        # 16 fields: checksum (H) + 15 l's. Field order matches
+        # :data:`_FMT_BIN5`:
+        #   0  checksum
+        #   1  wfmSize
+        #   2  formulaSize
+        #   3  noteSize
+        #   4  dataEUnitsSize
+        #   5..8   dimEUnitsSize[0..3]
+        #   9..12  dimLabelsSize[0..3]
+        #   13 sIndicesSize
+        #   14 optionsSize1
+        #   15 optionsSize2
+        bin_fields = struct.unpack(_FMT_BIN5, bin_bytes)
+        wfm_size = bin_fields[1]
+        formula_size = bin_fields[2]
+        note_size = bin_fields[3]
+
+        # 3. WaveHeader5.
+        wave_bytes = fh.read(_WAVE_HEADER5_SIZE)
+        if len(wave_bytes) != _WAVE_HEADER5_SIZE:
+            raise ValueError(
+                f"Igor .ibw file {path}: truncated WaveHeader5 "
+                f"(got {len(wave_bytes)} of {_WAVE_HEADER5_SIZE} bytes)."
+            )
+        # 120 fields. Field order matches :data:`_FMT_WAVE5`:
+        #   0  next (I)
+        #   1,2  creationDate, modDate (L)
+        #   3  npnts (l)
+        #   4  type (h)
+        #   5  dLock (h)
+        #   6..11  whpad1 (6 single bytes)
+        #   12 whVersion (h)
+        #   13..44  bname (32 single bytes)
+        #   45 whpad2 (l)
+        #   46 dFolder (I)
+        #   47..50  nDim[0..3] (4l)
+        #   51..54  sfA[0..3] (4d)
+        #   55..58  sfB[0..3] (4d)
+        #   59..62  dataUnits (4 single bytes)
+        #   63..78  dimUnits[0..3] (16 single bytes, 4 dims x 4 B)
+        #   79 fsValid (h)
+        #   80 whpad3 (h)
+        #   81,82  topFullScale, botFullScale (d)
+        #   83 dataEUnits (I)
+        #   84..87  dimEUnits[0..3] (4I)
+        #   88..91  dimLabels[0..3] (4I)
+        #   92 waveNoteH (I)
+        #   93..108  whUnused[0..15] (16l)
+        #   109..111  aModified, wModified, swModified (3h)
+        #   112,113  useBits, kindBits (2c)
+        #   114 formula (I)
+        #   115 depID (l)
+        #   116,117  whpad4, srcFldr (2h)
+        #   118 fileName (I)
+        #   119 sIndices (I)
+        wave_fields = struct.unpack(_FMT_WAVE5, wave_bytes)
+        npnts = wave_fields[3]
+        wave_type = wave_fields[4]
+        wh_version = wave_fields[12]
+        # ``c`` struct fields unpack to single-byte :class:`bytes`
+        # objects; concatenate them with :meth:`bytes.join` (NOT
+        # ``bytes(tuple)`` which would interpret the first element
+        # as a length and raise ``TypeError``).
+        bname_bytes = b"".join(wave_fields[13:45])  # 32 single bytes -> bytes
+        n_dim = list(wave_fields[47:51])
+        sf_a = list(wave_fields[51:55])
+        sf_b = list(wave_fields[55:59])
+        data_units_bytes = b"".join(wave_fields[59:63])  # 4 single bytes
+        dim_units_bytes = [b"".join(wave_fields[63 + i * 4 : 63 + i * 4 + 4]) for i in range(4)]
+        fs_valid = wave_fields[79]
+        top_full_scale = wave_fields[81]
+        bot_full_scale = wave_fields[82]
+        creation_date = wave_fields[1]
+        mod_date = wave_fields[2]
+        a_modified = wave_fields[109]
+        w_modified = wave_fields[110]
+        sw_modified = wave_fields[111]
+        # ``useBits`` / ``kindBits`` are packed as 1-byte :class:`c`
+        # fields and unpack to single-byte :class:`bytes` objects.
+        # We store the byte value as an int so the wave_header dict
+        # is JSON-serialisable downstream.
+        use_bits = int.from_bytes(wave_fields[112], "little")
+        kind_bits = int.from_bytes(wave_fields[113], "little")
+
+        # 4. wData — 2*N float64 in native byte order on a LE host.
+        # We read with ``<f8`` (little-endian float64) so the result
+        # is independent of the host's native float byte order.
+        data_byte_size = 8 * npnts
+        data_bytes = fh.read(data_byte_size)
+        if len(data_bytes) != data_byte_size:
+            raise ValueError(
+                f"Igor .ibw file {path}: truncated wData "
+                f"(got {len(data_bytes)} of {data_byte_size} bytes; "
+                f"npnts={npnts})."
+            )
+        wdata = np.frombuffer(data_bytes, dtype="<f8")
+
+        # 5. note.
+        note = b""
+        if note_size > 0:
+            note = fh.read(note_size)
+            if len(note) != note_size:
+                raise ValueError(
+                    f"Igor .ibw file {path}: truncated note "
+                    f"(got {len(note)} of {note_size} bytes)."
+                )
+
+    if wave_type != _NT_FP64:
+        raise ValueError(
+            f"Igor .ibw file {path}: only NT_FP64 (64-bit float) waves are "
+            f"supported; got type={wave_type!r}."
+        )
+
+    # Build the wave_header dict.  We mirror the upstream
+    # :func:`igor.binarywave.load` shape as closely as practical
+    # (numpy arrays of single bytes for the ``c``-array fields, plain
+    # Python types for the scalars) so :func:`_stringify_wave_header`
+    # and any downstream code can introspect the file the same way
+    # they do for v1/v2/v3 reads.
+    bname_arr = np.frombuffer(bname_bytes, dtype="S1").copy()
+    data_units_arr = np.frombuffer(data_units_bytes, dtype="S1").copy()
+    dim_units_arrays = [np.frombuffer(du, dtype="S1").copy() for du in dim_units_bytes]
+
+    wave_header: dict[str, Any] = {
+        # ``version`` is afmkit-side metadata we add so downstream
+        # code can branch on it without re-peeking the file.
+        "version": 5,
+        "type": int(wave_type),
+        "npnts": int(npnts),
+        "whVersion": int(wh_version),
+        "bname": bname_arr,
+        "dataUnits": data_units_arr,
+        "dimUnits": dim_units_arrays,
+        "nDim": n_dim,
+        "sfA": sf_a,
+        "sfB": sf_b,
+        "fsValid": int(fs_valid),
+        "topFullScale": float(top_full_scale),
+        "botFullScale": float(bot_full_scale),
+        "creationDate": int(creation_date),
+        "modDate": int(mod_date),
+        "aModified": int(a_modified),
+        "wModified": int(w_modified),
+        "swModified": int(sw_modified),
+        "useBits": int(use_bits),
+        "kindBits": int(kind_bits),
+        # ``formulaSize`` is the BinHeader5-side count of the
+        # ``formula`` section; we always write 0 and don't read it
+        # back, but expose it for completeness.
+        "formulaSize": int(formula_size),
+        # ``wfmSize`` is the BinHeader5-side byte count of
+        # (WaveHeader5 + wData) and is the v5 equivalent of the
+        # v2 ``wfmSize`` field. Expose it so downstream code can
+        # sanity-check the layout.
+        "wfmSize": int(wfm_size),
+    }
+
+    return {"wave": {"wave_header": wave_header, "wData": wdata, "note": note}}
+
+
+# ---------------------------------------------------------------------------
 # IgorIBWLoader
 # ---------------------------------------------------------------------------
 
@@ -607,6 +903,19 @@ class IgorIBWLoader:
     def load(self, path: Path | str) -> ForceCurve:
         """Read one ``.ibw`` file and return a :class:`ForceCurve`.
 
+        The read path is **split by wave version**:
+
+          - **v5** files are read by a stdlib-only reader
+            (:func:`_load_ibw_v5_stdlib`) that does not require the
+            optional ``igor`` package.
+          - **v1, v2, v3** files are read by delegating to
+            :func:`igor.binarywave.load`.  This requires the optional
+            ``igor`` package (``pip install 'afmkit[igor]'``).
+
+        Both paths produce a dict shaped the same way (a ``"wave"``
+        key with ``"wave_header"`` / ``"wData"`` / ``"note"``), so
+        the post-processing below is shared.
+
         Parameters
         ----------
         path
@@ -627,15 +936,52 @@ class IgorIBWLoader:
             If the wave is 1-D (no second column to split into
             ``force``), if the file is not a recognised Igor version
             (1/2/3/5), or if the wave's data type is not 64-bit float.
+        ImportError
+            If the file is v1/v2/v3 and the optional ``igor`` package
+            is not installed.  v5 files never trigger this.
         """
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Igor .ibw file not found: {path}")
 
+        # Peek the 2-byte version to dispatch between the stdlib v5
+        # reader and the binarywave-delegated v1/v2/v3 reader.  We
+        # try both little- and big-endian, mirroring :meth:`can_load`
+        # so the loader is symmetric with its own sniff check.
         try:
-            data = _binarywave.load(str(path))
-        except Exception as exc:  # pragma: no cover - delegated to library
-            raise ValueError(f"Failed to parse Igor .ibw file {path}: {exc}") from exc
+            with path.open("rb") as fh:
+                version_bytes = fh.read(2)
+        except OSError as exc:
+            raise ValueError(f"Failed to read Igor .ibw file {path}: {exc}") from exc
+        if len(version_bytes) != 2:
+            raise ValueError(
+                f"Igor .ibw file {path}: truncated header "
+                f"(expected 2-byte version, got {len(version_bytes)} bytes)."
+            )
+        candidates = struct.unpack("<hh", version_bytes + version_bytes)
+        version = candidates[0] if candidates[0] in (1, 2, 3, 5) else candidates[1]
+        if version not in (1, 2, 3, 5):
+            raise ValueError(
+                f"Igor .ibw file {path}: unsupported wave version {version!r} "
+                f"(expected 1, 2, 3, or 5)."
+            )
+
+        if version == 5:
+            try:
+                data = _load_ibw_v5_stdlib(path)
+            except Exception as exc:
+                raise ValueError(f"Failed to parse Igor .ibw v5 file {path}: {exc}") from exc
+        else:
+            # v1 / v2 / v3 — delegate to the optional ``igor`` package.
+            # The import is lazy so a minimal install without ``igor``
+            # can still load afmkit and round-trip v5 files.
+            binarywave = _get_binarywave()
+            try:
+                data = binarywave.load(str(path))
+            except Exception as exc:  # pragma: no cover - delegated to library
+                raise ValueError(
+                    f"Failed to parse Igor .ibw v{version} file {path}: {exc}"
+                ) from exc
 
         wave = data.get("wave", {})
         wave_header = wave.get("wave_header", {})
