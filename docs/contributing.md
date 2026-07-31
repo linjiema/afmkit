@@ -28,47 +28,61 @@ the same hook mechanism pytest uses. The four hookspecs are declared in
 
 ## Skeleton: a new model
 
-Suppose you want to add a Freely Jointed Chain (FJC) model as a plugin.
+Suppose you want to add a twist-WLC model as a plugin. The
+first-party FJC model is shipped in-tree as `afmkit.models.fjc`
+(v0.3+, registered both in `MODEL_REGISTRY["fjc"]` and as a
+pluggy entry point so it can be re-implemented out of tree);
+WLC (`"wlc"`) and eWLC (`"ewlc"`) are also first-party. Use
+this skeleton for a *new* polymer model — e.g. twist-WLC,
+Marko-Siggia with a stretch modulus, or a polymer variant
+specific to your lab.
 
 ### 1. Project layout
 
 ```
-afmkit-fjc/
+afmkit-twlc/
 ├── pyproject.toml
 ├── src/
-│   └── afmkit_fjc/
+│   └── afmkit_twlc/
 │       ├── __init__.py
-│       └── fjc.py
+│       └── twlc.py
 └── tests/
-    └── test_fjc.py
+    └── test_twlc.py
 ```
 
 ### 2. The model
 
 ```python
-# src/afmkit_fjc/fjc.py
+# src/afmkit_twlc/twlc.py
 from __future__ import annotations
 
 import numpy as np
 from afmkit.models.base import PolymerModel
 
 
-class FJCModel(PolymerModel):
-    """Freely Jointed Chain (FJC) model.
-
-    F(x) = (kB T / b) * [L/x - 1/4 + x/L]  (with Kuhn length b)
+class TwistWLCModel(PolymerModel):
+    """Twist worm-like chain (placeholder for the lab's specific
+    polymer variant — replace with the actual formula).
     """
 
-    param_names: tuple[str, ...] = ("b", "L")
-    param_bounds: tuple[tuple[float, float], ...] = ((0.1, 10.0), (10.0, 1000.0))
-    param_hints: dict[str, str] = {"b": "Kuhn length (nm)", "L": "Contour length (nm)"}
+    param_names: tuple[str, ...] = ("p", "L", "C")
+    param_bounds: tuple[tuple[float, float], ...] = (
+        (0.1, 5.0),    # p (persistence length, nm)
+        (10.0, 1000.0),  # L (contour length, nm)
+        (0.0, 1000.0),   # C (twist rigidity, kB T·nm)
+    )
+    param_hints: dict[str, str] = {
+        "p": "Persistence length (nm)",
+        "L": "Contour length (nm)",
+        "C": "Twist rigidity (kB T·nm)",
+    }
 
-    def __call__(self, x: np.ndarray, b: float, L: float) -> np.ndarray:
-        # ... evaluate the FJC formula
+    def __call__(self, x: np.ndarray, p: float, L: float, C: float) -> np.ndarray:
+        # ... evaluate the twist-WLC formula
         ...
 
     def guess_params(self, x: np.ndarray, y: np.ndarray) -> dict[str, float]:
-        return {"b": 1.0, "L": float(x.max())}
+        return {"p": 0.4, "L": float(x.max()), "C": 100.0}
 ```
 
 ### 3. Register via entry points
@@ -76,23 +90,23 @@ class FJCModel(PolymerModel):
 ```toml
 # pyproject.toml
 [project]
-name = "afmkit-fjc"
-dependencies = ["afmkit>=0.1"]
+name = "afmkit-twlc"
+dependencies = ["afmkit>=0.5"]
 
 [project.entry-points."afmkit.models"]
-fjc = "afmkit_fjc.fjc:FJCModel"
+twlc = "afmkit_twlc.twlc:TwistWLCModel"
 ```
 
 ### 4. Publish to PyPI
 
 ```bash
-pip install afmkit-fjc
+pip install afmkit-twlc
 ```
 
 afmkit auto-discovers the plugin on next import. Users can now do:
 
 ```python
-result = afmkit.fit(curve, model="fjc")
+result = afmkit.fit(curve, model="twlc")
 ```
 
 ## What you should NOT do

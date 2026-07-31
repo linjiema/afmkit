@@ -477,6 +477,143 @@ class TestToMat:
             to_mat(CurveBatch([]), tmp_path / "void.mat")
 
 
+# -- to_mat with fits / reviewers (v0.5+) --------------------------------
+
+
+class TestToMatWithFits:
+    """``to_mat`` with ``fits`` adds a top-level ``fits`` struct to the file."""
+
+    def test_fits_field_appears_with_expected_columns(self, tmp_path: Path) -> None:
+        batch = _make_batch(n_curves=2)
+        fits = [_make_fit(p=0.40, lc=200.0), _make_fit(p=0.42, lc=198.0)]
+        p = tmp_path / "with_fits.mat"
+
+        to_mat(batch, p, fits=fits)
+        data = scipy.io.loadmat(str(p))
+
+        assert "fits" in data, "expected a top-level 'fits' field"
+        # ``savemat`` writes 1-D object arrays of structs as 1×N
+        # 2-D; squeeze to recover the canonical 1-D layout.
+        fits_arr = data["fits"].squeeze()
+        assert fits_arr.shape == (2,)
+        # ``dtype.names`` lists the per-field names; the v0.4 CSV
+        # one-row-per-fit columns are present plus the
+        # ``curve_index`` join column.
+        names = set(fits_arr.dtype.names)
+        for col in (
+            "model",
+            "p",
+            "L",
+            "chi_square",
+            "reduced_chi_square",
+            "n_data",
+            "curve_index",
+        ):
+            assert col in names, f"missing fits column: {col}"
+        # The parameter values land in the right row. scipy wraps
+        # the inner scalars in 0-D numpy arrays (the round-trip
+        # preserves the dtype but boxes the value), so unwrap with
+        # ``.item()`` before comparing.
+        assert str(np.asarray(fits_arr["model"][0]).item()).strip() == "WLC"
+        p_val_0 = float(np.asarray(fits_arr["p"][0]).item())
+        lc_val_0 = float(np.asarray(fits_arr["L"][0]).item())
+        assert p_val_0 == pytest.approx(0.40)
+        assert lc_val_0 == pytest.approx(200.0)
+        curve_idx_0 = int(np.asarray(fits_arr["curve_index"][0]).item())
+        assert curve_idx_0 == 0
+
+    def test_fits_none_keeps_legacy_v0_4_shape(self, tmp_path: Path) -> None:
+        """The default (no fits) keeps the v0.4 .mat shape."""
+        batch = _make_batch(n_curves=2)
+        p = tmp_path / "legacy.mat"
+
+        to_mat(batch, p)
+
+        data = scipy.io.loadmat(str(p))
+        assert "fits" not in data
+        assert "peak_review" not in data
+
+    def test_empty_fits_raises(self, tmp_path: Path) -> None:
+        batch = _make_batch(n_curves=1)
+        p = tmp_path / "empty_fits.mat"
+        with pytest.raises(ValueError, match="empty list of fits"):
+            to_mat(batch, p, fits=[])
+
+
+class TestToMatWithReviewers:
+    """``to_mat`` with ``reviewers`` adds a top-level ``peak_review`` struct."""
+
+    def test_peak_review_field_appears_with_per_peak_rows(self, tmp_path: Path) -> None:
+        batch = _make_batch(n_curves=2)
+        fits = [_make_fit(), _make_fit(p=0.5)]
+        reviewers = {0: _make_reviewer(n_peaks=3), 1: _make_reviewer(n_peaks=2)}
+        p = tmp_path / "with_peaks.mat"
+
+        to_mat(batch, p, fits=fits, reviewers=reviewers)
+        data = scipy.io.loadmat(str(p))
+
+        assert "fits" in data
+        assert "peak_review" in data
+        # ``savemat`` writes 1-D object arrays of structs as 1×N
+        # 2-D; squeeze to recover the canonical 1-D layout.
+        peak_arr = data["peak_review"].squeeze()
+        # 3 + 2 = 5 peak rows, one per (curve, peak).
+        assert peak_arr.shape == (5,)
+        names = set(peak_arr.dtype.names)
+        for col in (
+            "curve_index",
+            "peak_index",
+            "extension_nm",
+            "force_pN",
+            "manual_force_pN",
+            "accepted",
+            "confidence",
+            "prominence_pN",
+            "width_points",
+            "height_drop_pN",
+            "note",
+            "model",  # joined from fits
+            "p",  # joined from fits
+        ):
+            assert col in names, f"missing peak_review column: {col}"
+
+    def test_curve_with_no_reviewer_emits_one_placeholder_row(self, tmp_path: Path) -> None:
+        batch = _make_batch(n_curves=2)
+        fits = [_make_fit(), _make_fit(p=0.5)]
+        # Only curve 0 has a reviewer.
+        reviewers = {0: _make_reviewer(n_peaks=2)}
+        p = tmp_path / "no_reviewer.mat"
+
+        to_mat(batch, p, fits=fits, reviewers=reviewers)
+        data = scipy.io.loadmat(str(p))
+
+        # ``savemat`` writes 1-D object arrays of structs as 1×N
+        # 2-D; squeeze to recover the canonical 1-D layout.
+        peak_arr = data["peak_review"].squeeze()
+        # 2 peaks + 1 placeholder = 3 rows; every fit is represented.
+        assert peak_arr.shape == (3,)
+        # Placeholder row carries the curve_index of the unreviewer'd curve.
+        curve_indices = [int(np.asarray(peak_arr["curve_index"][i]).item()) for i in range(3)]
+        assert sorted(curve_indices) == [0, 0, 1]
+
+    def test_reviewers_without_fits_raises(self, tmp_path: Path) -> None:
+        batch = _make_batch(n_curves=1)
+        p = tmp_path / "reviewers_no_fits.mat"
+        with pytest.raises(ValueError, match="requires `fits`"):
+            to_mat(batch, p, reviewers={0: _make_reviewer(n_peaks=1)})
+
+    def test_stray_reviewer_index_raises(self, tmp_path: Path) -> None:
+        batch = _make_batch(n_curves=1)
+        fits = [_make_fit()]
+        reviewers = {
+            0: _make_reviewer(n_peaks=1),
+            5: _make_reviewer(n_peaks=1),  # curve 5 has no fit
+        }
+        p = tmp_path / "stray.mat"
+        with pytest.raises(ValueError, match="curve indices not in the fit list"):
+            to_mat(batch, p, fits=fits, reviewers=reviewers)
+
+
 # -- to_parquet ----------------------------------------------------------
 
 
@@ -503,6 +640,148 @@ class TestToParquet:
             df["ext_000"].to_numpy()[: batch[0].n_points],
             batch[0].extension,
         )
+
+
+# -- to_parquet with fits / reviewers (v0.5+) -----------------------------
+
+
+class TestToParquetWithFits:
+    """``to_parquet`` with ``fits`` writes a sibling ``.fits.parquet`` file."""
+
+    def test_fits_sibling_file_appears_with_expected_columns(self, tmp_path: Path) -> None:
+        batch = _make_batch(n_curves=2)
+        fits = [_make_fit(p=0.40, lc=200.0), _make_fit(p=0.42, lc=198.0)]
+        p = tmp_path / "curves.parquet"
+
+        to_parquet(batch, p, fits=fits)
+
+        # The main curves file is at the original path.
+        assert p.exists()
+        # The fits sibling file is at ``<path>.fits.parquet`` (the
+        # ``.parquet`` suffix is replaced with ``.fits.parquet``).
+        fits_path = tmp_path / "curves.fits.parquet"
+        assert fits_path.exists(), f"expected {fits_path} to exist"
+        fit_df = pd.read_parquet(fits_path)
+        assert len(fit_df) == 2
+        for col in ("model", "p", "L", "chi_square", "curve_index"):
+            assert col in fit_df.columns, f"missing fits column: {col}"
+        # curve_index joins back to the batch / peak tables.
+        assert list(fit_df["curve_index"]) == [0, 1]
+
+    def test_fits_none_keeps_legacy_v0_4_shape(self, tmp_path: Path) -> None:
+        """The default (no fits) writes only the curves file."""
+        batch = _make_batch(n_curves=2)
+        p = tmp_path / "curves.parquet"
+
+        to_parquet(batch, p)
+
+        assert p.exists()
+        # No sibling files.
+        assert not (tmp_path / "curves.fits.parquet").exists()
+        assert not (tmp_path / "curves.peaks.parquet").exists()
+
+    def test_empty_fits_raises(self, tmp_path: Path) -> None:
+        batch = _make_batch(n_curves=1)
+        p = tmp_path / "empty_fits.parquet"
+        with pytest.raises(ValueError, match="empty list of fits"):
+            to_parquet(batch, p, fits=[])
+
+
+class TestToParquetWithReviewers:
+    """``to_parquet`` with ``reviewers`` writes a ``.peaks.parquet`` sibling."""
+
+    def test_peaks_sibling_file_appears_with_per_peak_rows(self, tmp_path: Path) -> None:
+        batch = _make_batch(n_curves=2)
+        fits = [_make_fit(), _make_fit(p=0.5)]
+        reviewers = {0: _make_reviewer(n_peaks=3), 1: _make_reviewer(n_peaks=2)}
+        p = tmp_path / "curves.parquet"
+
+        to_parquet(batch, p, fits=fits, reviewers=reviewers)
+
+        # Main + fits + peaks files all exist.
+        assert p.exists()
+        assert (tmp_path / "curves.fits.parquet").exists()
+        peak_path = tmp_path / "curves.peaks.parquet"
+        assert peak_path.exists(), f"expected {peak_path} to exist"
+        peak_df = pd.read_parquet(peak_path)
+        # 3 + 2 = 5 peak rows.
+        assert len(peak_df) == 5
+        for col in (
+            "curve_index",
+            "peak_index",
+            "extension_nm",
+            "force_pN",
+            "manual_force_pN",
+            "accepted",
+            "confidence",
+            "prominence_pN",
+            "width_points",
+            "height_drop_pN",
+            "note",
+        ):
+            assert col in peak_df.columns, f"missing peaks column: {col}"
+        # curve_index groups match the input mapping.
+        assert list(peak_df["curve_index"]) == [0, 0, 0, 1, 1]
+
+    def test_curve_with_no_reviewer_emits_one_placeholder_row(self, tmp_path: Path) -> None:
+        batch = _make_batch(n_curves=2)
+        fits = [_make_fit(), _make_fit(p=0.5)]
+        reviewers = {0: _make_reviewer(n_peaks=2)}
+        p = tmp_path / "curves.parquet"
+
+        to_parquet(batch, p, fits=fits, reviewers=reviewers)
+        peak_df = pd.read_parquet(tmp_path / "curves.peaks.parquet")
+
+        # 2 peaks + 1 placeholder = 3 rows; every fit is represented.
+        assert len(peak_df) == 3
+        assert sorted(peak_df["curve_index"].tolist()) == [0, 0, 1]
+        # Placeholder row has NaN extension.
+        placeholder = peak_df[peak_df["curve_index"] == 1].iloc[0]
+        assert pd.isna(placeholder["extension_nm"])
+
+    def test_per_peak_manual_force_and_accepted_round_trip(self, tmp_path: Path) -> None:
+        batch = _make_batch(n_curves=1)
+        fits = [_make_fit()]
+        reviewer = _make_reviewer(
+            n_peaks=3,
+            reject_indices=(1,),
+            override={0: 42.5},
+            notes={2: "doublet"},
+        )
+        p = tmp_path / "curves.parquet"
+
+        to_parquet(batch, p, fits=fits, reviewers={0: reviewer})
+        peak_df = pd.read_parquet(tmp_path / "curves.peaks.parquet")
+
+        # Peak 0: accepted, manual_force set.
+        row0 = peak_df.iloc[0]
+        assert bool(row0["accepted"]) is True
+        assert float(row0["manual_force_pN"]) == 42.5
+        # Peak 1: rejected, no override.
+        row1 = peak_df.iloc[1]
+        assert bool(row1["accepted"]) is False
+        assert pd.isna(row1["manual_force_pN"])
+        # Peak 2: accepted, note attached.
+        row2 = peak_df.iloc[2]
+        assert bool(row2["accepted"]) is True
+        assert str(row2["note"]) == "doublet"
+
+    def test_reviewers_without_fits_raises(self, tmp_path: Path) -> None:
+        batch = _make_batch(n_curves=1)
+        p = tmp_path / "reviewers_no_fits.parquet"
+        with pytest.raises(ValueError, match="requires `fits`"):
+            to_parquet(batch, p, reviewers={0: _make_reviewer(n_peaks=1)})
+
+    def test_stray_reviewer_index_raises(self, tmp_path: Path) -> None:
+        batch = _make_batch(n_curves=1)
+        fits = [_make_fit()]
+        reviewers = {
+            0: _make_reviewer(n_peaks=1),
+            5: _make_reviewer(n_peaks=1),  # curve 5 has no fit
+        }
+        p = tmp_path / "stray.parquet"
+        with pytest.raises(ValueError, match="curve indices not in the fit list"):
+            to_parquet(batch, p, fits=fits, reviewers=reviewers)
 
 
 # -- to_markdown ---------------------------------------------------------

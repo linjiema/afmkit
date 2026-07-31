@@ -85,6 +85,9 @@ nav:
       - api/curve.md
   - Contributing: contributing.md
   - Team & agent workflow: team.md
+  - Development:
+      - Git workflow: git-workflow.md
+      - Release checklist: release-checklist.md
   - Roadmap:
-      - v0.3: v0.3-roadmap.md
+      - v0.3 (shipped): v0.3-roadmap.md
   - Changelog: https://github.com/linjiema/afmkit/blob/main/CHANGELOG.md

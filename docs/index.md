@@ -16,7 +16,7 @@ lab can build a reproducible pipeline on top of.
 ## Install
 
 ```bash
-pip install "afmkit @ git+https://github.com/linjiema/afmkit.git@v0.2.0"
+pip install "afmkit @ git+https://github.com/linjiema/afmkit.git@v0.5.0"
 ```
 
 afmkit is not on PyPI — install from GitHub and pin a tag for
@@ -70,10 +70,10 @@ reproducibility. Use `@main` for the bleeding edge.
 ## Project
 
 - :fontawesome-brands-github: [Source on GitHub](https://github.com/linjiema/afmkit)
-- :material-tag: [Latest release (v0.2.0)](https://github.com/linjiema/afmkit/releases/tag/v0.2.0)
+- :material-tag: [Latest release (v0.5.0)](https://github.com/linjiema/afmkit/releases/tag/v0.5.0)
 - :material-history: [Changelog](https://github.com/linjiema/afmkit/blob/main/CHANGELOG.md)
 - :material-account-group: [Team & agent workflow](team.md)
-- :material-roadmap: [Roadmap](v0.3-roadmap.md)
+- :material-roadmap: [Roadmap (v0.3, shipped)](v0.3-roadmap.md)
 - :material-handshake: [Contributing / plugin authoring](contributing.md)
 
 ## Citation

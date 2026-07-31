@@ -258,6 +258,15 @@ _DIRECTION_SUFFIX_RE = re.compile(
 #: Pattern for the ``"k=0.12"`` substring inside a wave's ``note`` text.
 _K_NOTE_RE = re.compile(r"(?:^|;\s*)k\s*=\s*([-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)")
 
+#: Pattern for the generic ``"key=value"`` token in a wave's note text.
+#: Matches the key (a Python identifier; the writer only emits
+#: :class:`str` keys from the curve metadata) and the value
+#: (greedy through to the next ``; `` separator).  The leading
+#: ``^|;`` anchor ensures the match doesn't pick up a substring
+#: of a longer value (e.g. ``notes="k=foo; bar"`` would otherwise
+#: match ``k=foo``).  Whitespace around ``=`` is tolerated.
+_NOTE_TOKEN_RE = re.compile(r"(?:^|;\s*)([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^;]+?)\s*(?=;|\x00|$)")
+
 
 # ---------------------------------------------------------------------------
 # Low-level helpers — packing the v2 binary wave on disk
@@ -454,6 +463,64 @@ def _parse_k_from_note(note: bytes | str | None) -> float | None:
     return value
 
 
+def _coerce_note_value(raw: str) -> Any:
+    """Coerce a note-string value to the most-restrictive Python type.
+
+    The note is text, so the on-disk representation is always a
+    string. The writer's contract is to emit scalars (str, int,
+    float, bool) for the ``extra`` metadata, so we try the
+    narrowest types first and fall back to the raw string. Booleans
+    are matched as the exact strings ``"True"`` and ``"False"``
+    (matching the writer's :func:`repr`); anything else stays a
+    string.
+
+    Returns the coerced value, or the raw string if no other type
+    fits.
+    """
+    text = raw.strip()
+    if text == "True":
+        return True
+    if text == "False":
+        return False
+    # Integer (only when there's no decimal point or exponent —
+    # otherwise we'd swallow floats that happen to round-trip).
+    if re.fullmatch(r"[-+]?\d+", text):
+        try:
+            return int(text)
+        except ValueError:
+            pass
+    # Float (including scientific notation).
+    try:
+        value = float(text)
+    except ValueError:
+        return raw
+    return value
+
+
+def _parse_note_metadata(note: bytes | str | None) -> dict[str, Any]:
+    """Extract all ``key=value`` pairs from an afmkit-written wave note.
+
+    The first token is always the ``afmkit=2col`` marker and is
+    skipped (the reader detects it via :func:`_detect_2col_marker`).
+    Subsequent tokens are returned as a ``{key: value}`` dict with
+    values coerced to their natural Python type
+    (see :func:`_coerce_note_value`).
+
+    Returns an empty dict if the note is ``None`` or carries no
+    ``key=value`` tokens.
+    """
+    if note is None:
+        return {}
+    text = note.decode("utf-8", errors="replace") if isinstance(note, bytes) else note
+    out: dict[str, Any] = {}
+    for match in _NOTE_TOKEN_RE.finditer(text):
+        key, raw = match.group(1), match.group(2)
+        if key == "afmkit":  # the ``afmkit=2col`` marker, not data
+            continue
+        out[key] = _coerce_note_value(raw)
+    return out
+
+
 def _detect_2col_marker(note: bytes | str | None) -> bool:
     """Return ``True`` if the wave note carries our ``afmkit=2col`` marker.
 
@@ -614,16 +681,35 @@ class IgorIBWLoader:
                 f"supported; got type={wave_header.get('type')!r}."
             )
 
-        # Pull metadata from the wave header + note string.
-        k_note = _parse_k_from_note(note)
+        # Pull metadata from the wave header + note string.  The
+        # note is the v0.3+ afmkit-side store for round-trippable
+        # metadata; :func:`_parse_note_metadata` re-hydrates every
+        # ``key=value`` token the writer emitted, with the special
+        # ``afmkit=2col`` marker stripped (it carries structural
+        # information, not data).
+        note_meta = _parse_note_metadata(note)
+        # The note's on-disk key is ``k`` (the short form that fits
+        # in the v2 255-byte note), but the curve metadata's
+        # canonical key is ``k_cantilever``.  Rename before merging
+        # so the round-trip preserves the user-facing attribute.
+        if "k" in note_meta:
+            note_meta["k_cantilever"] = note_meta.pop("k")
         direction = _direction_from_name(path.name)
         metadata: dict[str, Any] = {
             "source_file": path.name,
             "direction": direction,
             "ibw_header": _stringify_wave_header(wave_header),
         }
-        if k_note is not None:
-            metadata["k_cantilever"] = k_note
+        # Note-driven metadata wins over the default wave-header
+        # fields: the writer embeds ``k_cantilever`` (and any extra
+        # scalar metadata) in the note, and that copy is the
+        # user-facing source of truth.  The ``source_file`` /
+        # ``direction`` / ``ibw_header`` keys are still set from the
+        # filesystem / wave header because they are not part of
+        # the note contract.
+        for key, value in note_meta.items():
+            if key not in metadata:
+                metadata[key] = value
 
         return ForceCurve(ext, force, metadata=metadata)
 
@@ -728,6 +814,71 @@ def load_ibw_batch(
     return CurveBatch(
         curves, name=None, metadata={"k_cantilever": k_cantilever} if k_cantilever else {}
     )
+
+
+def roundtrip_ibw(curve: ForceCurve, path: Path | str, *, version: int = 2) -> ForceCurve:
+    """Write a :class:`ForceCurve` to ``.ibw`` and read it back.
+
+    Convenience wrapper around :func:`save_ibw` + :func:`load_ibw`
+    that demonstrates the v0.5+ round-trip contract: the
+    ``k_cantilever`` and any other scalar metadata embedded in the
+    wave ``note`` by :func:`save_ibw` are re-hydrated by
+    :func:`load_ibw`, so the returned curve carries the same
+    metadata as the input — no explicit ``k_cantilever`` argument
+    needed on the read side.
+
+    Parameters
+    ----------
+    curve
+        The curve to serialise.
+    path
+        Destination file.  Parent directories are created if missing.
+    version
+        Passed through to :func:`save_ibw`.  ``2`` is the default
+        (works in all versions of Igor Pro); ``5`` is the modern
+        Igor Pro 6.00+ layout.  Both round-trip through
+        :func:`load_ibw`.
+
+    Returns
+    -------
+    ForceCurve
+        The curve as read back from ``path``.
+
+    Notes
+    -----
+    The (extension, force) arrays are compared with
+    :func:`numpy.testing.assert_allclose` (default
+    ``rtol=1e-7``); a round-trip that changes the data values
+    raises :class:`AssertionError`.  The metadata comparison is
+    loose: scalar metadata keys (the ones the writer embeds in
+    the note) are checked for equality, while ``ibw_header`` and
+    ``source_file`` may differ because the reader re-derives them
+    from the wave header / path.  This is a behavioural test, not
+    a byte-equal contract.
+
+    See Also
+    --------
+    save_ibw, load_ibw
+    """
+    save_ibw(curve, path, version=version)
+    loaded = load_ibw(path)
+    np.testing.assert_allclose(loaded.extension, curve.extension)
+    np.testing.assert_allclose(loaded.force, curve.force)
+    # The note re-hydration contract: every ``key=value`` token
+    # the writer emitted must come back through ``metadata``.
+    # We check the keys we care about (``k_cantilever`` plus any
+    # extra scalar metadata the caller attached).
+    for key, value in curve.metadata.items():
+        if key in ("source_file", "ibw_header", "direction"):
+            # Reader re-derives these from the wave header /
+            # path; we don't compare them bit-for-bit.
+            continue
+        if key in loaded.metadata:
+            assert loaded.metadata[key] == value, (
+                f"round-trip mismatch for {key!r}: "
+                f"wrote {value!r}, read back {loaded.metadata[key]!r}"
+            )
+    return loaded
 
 
 # ---------------------------------------------------------------------------

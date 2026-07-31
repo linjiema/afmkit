@@ -6,12 +6,13 @@ running the Igor scripts for years, this is your starting point —
 conventions, units, the WLC formula, and the directory layout are all
 preserved 1:1.
 
-!!! tip "v0.1 scope"
-    v0.1 ships the data model, the JPK loader, the WLC model, the WLC
-    fitting engine, and the exporters. Everything that touches the GUI
-    (peak picking panel, cursor handling) and the `.ibw` round-trip
-    lives in v0.2. See the [status table](#status) at the bottom for
-    the per-feature state.
+!!! tip "v0.5 scope"
+    v0.5 ships the data model, the JPK loader, the Igor `.ibw` v2 + v5
+    round-trip with full note re-hydration, the WLC / eWLC / FJC
+    polymer models, the `PeakReviewer` interactive review state, the
+    Textual TUI with matplotlib plot panel, and the CSV / `.mat` /
+    Parquet / Markdown exporters with peak-review plumbing. See the
+    [status table](#status) at the bottom for the per-feature state.
 
 ## Loading data
 
@@ -20,14 +21,14 @@ preserved 1:1.
 | `FXImport()` — pop a folder picker, read a 4-column `.txt` | `afmkit.io.jpk_txt.load_jpk_txt(path, k_cantilever=0.1)` | Loading a single approach/retract pair. |
 | `RefoldingImport()` — multi-cycle refolding data, slice 4000–7999 | not in v0.1 — use `load_jpk_txt` per file and slice with `curve.select_range(50, 200)` | Folded / refolded constructs. The Igor code hard-codes the row range `[4000, 7999]`; the afmkit equivalent is an extension-based window. |
 | Batch directory ingest (e.g. `filelist = IndexedFile(root, ...)` loop in `FXImport`) | glob the directory, call `load_jpk_txt` per file, concatenate into a `CurveBatch`:<br>`CurveBatch(chain.from_iterable(load_jpk_txt(p, k_cantilever=k) for p in Path("data").glob("*.txt")))` | One folder = one batch. |
-| `IgorImport()` — re-use already-loaded Igor waves | **not in v0.1.** Re-export the waves to CSV/Tab-Separated from Igor, then wrap each in `ForceCurve`. The native `.ibw` reader is v0.2. | Translating existing in-memory Igor data. |
+| `IgorImport()` — re-use already-loaded Igor waves | `afmkit.io.igor_ibw.load_ibw(path)` (v0.2+) / `afmkit.io.igor_ibw.load_ibw_batch(paths)` (v0.2+) — v0.5+ re-hydrates every scalar metadata key from the wave `note` (`k_cantilever`, `temperature`, `experiment_id`, …) | Translating existing `.ibw` files written by afmkit or hand-written in Igor. |
 | Stored as `Force_F{n}`, `Extension_F{n}`, `Force_B{n}`, `Extension_B{n}` | `CurveBatch` of `ForceCurve` objects with `metadata` dict | In-memory representation. |
 
 !!! note "Python import paths"
     `load_jpk_txt` and `JPKTxtLoader` are **not** re-exported from
-    `afmkit.io.__init__` in v0.1 — import them from
-    `afmkit.io.jpk_txt` directly. The top-level `import afmkit` only
-    exposes the version string.
+    `afmkit.io.__init__` — import them from `afmkit.io.jpk_txt`
+    directly. The top-level `import afmkit` only exposes the
+    version string.
 
 The unit conversions (`1e12` N→pN, `1e9` m→nm, `-F/k` cantilever
 correction) and the per-direction baseline subtraction (mean of the
@@ -229,7 +230,7 @@ corrected = curve.with_force(curve.force - mean)
 
 For refolding / multi-cycle data the original code re-uses the same
 heuristic on a different point range (`V_npnts-201` to
-`V_npnts-1`). v0.1 does not have a dedicated refolding loader; load
+`V_npnts-1`). afmkit does not have a dedicated refolding loader; load
 each cycle with `load_jpk_txt` and either pre-trim the input or call
 `curve.select_range(50, 200)` to crop the cycle you want.
 
@@ -294,7 +295,7 @@ model and the fit API. If you want a single end-to-end reference,
 authors of afmkit run it as the smoke test on every release.
 
 !!! note "Notebook status"
-    The quickstart notebook is checked in alongside the v0.1.0
+    The quickstart notebook is checked in alongside the v0.5.0
     release. If you are running off a development checkout and the
     file is missing locally, the `01_quickstart.ipynb` source of
     truth is in the GitHub repo; pull it before following along.
@@ -331,15 +332,21 @@ For deeper dives:
 A short list of "this would have eaten an afternoon of debugging"
 moments, with the fix for each.
 
-### 1. The `.ibw` round-trip is **not** in v0.1
+### 1. The `.ibw` reader wants the `igor` extra
 
-`afmkit.io.read_ibw` does not exist in v0.1. The native Igor Binary
-Wave reader is v0.2, pending the `igor` optional extra being
-unblocked on Python 3.13.
+`afmkit.io.igor_ibw.load_ibw` delegates to the upstream
+`igor.binarywave.load` (the v5 path; the v2 writer is a stdlib
+emitter). The `igor` PyPI package is an optional `[igor]` extra
+on the v0.5 install:
 
-If you have a folder of `.ibw` files you want to load today, the
-fastest workaround is to export them from Igor as plain text and
-wrap each pair of columns in a `ForceCurve`:
+```bash
+pip install "afmkit[igor] @ git+https://github.com/linjiema/afmkit.git@v0.5.0"
+```
+
+Without the extra, `from afmkit.io.igor_ibw import load_ibw` raises
+`ImportError`. The fastest workaround if you can't add the extra
+is to export from Igor as plain text and wrap each pair of columns
+in a `ForceCurve`:
 
 ```python
 import numpy as np
@@ -352,24 +359,37 @@ batch = CurveBatch([curve], name="trace_001")
 ```
 
 The unit conversion that the JPK loader normally does for you
-(`1e12`, `1e9`, `-F/k`) is **not** applied here — you have to do it
-yourself, since the `.ibw` files store whatever units your Igor
-script chose.
+(`1e12`, `1e9`, `-F/k`) is **not** applied here — you have to do
+it yourself, since the `.ibw` files store whatever units your
+Igor script chose.
 
-### 2. eWLC and FJC are plugin-only in v0.1
+### 2. The v0.5 `load_ibw` re-hydrates every scalar `key=value` from the note
 
-The `MODEL_REGISTRY` ships with exactly one entry, `"wlc"`. eWLC
-(Wang 1997), FJC, and twist-WLC are first-class extension points
-— see [`src/afmkit/plugins.py`][plugins-py] — but no first-party
-implementations are shipped. To use eWLC, write a class that
-satisfies the [`PolymerModel`][PolymerModel] protocol and call
-`afmkit.models.register_model("ewlc", EwlcModel)` once at import
-time. The fitter will pick it up via `model="ewlc"`.
+As of v0.5, the `load_ibw` reader re-hydrates every
+`key=value` token the `save_ibw` writer embedded in the wave
+`note` (`k_cantilever`, `temperature`, `experiment_id`, `notes`,
+`in_liquid`, `n_averages`, …). The on-disk short form `k=` is
+renamed to the canonical `k_cantilever` metadata key on the way
+back in. Callers no longer need to pass `k_cantilever=…` on the
+read side; the writer's note is the source of truth. A legacy
+file with a hand-written note that has no `k=` token still loads
+cleanly (just without the `k_cantilever` key, not a crash).
 
-[plugins-py]: https://github.com/linjiema/afmkit/blob/main/src/afmkit/plugins.py
-[PolymerModel]: api/curve.md
+For the all-in-one write+read+verify convenience, use
+`afmkit.io.igor_ibw.roundtrip_ibw(curve, path, *, version=2)`.
 
-### 3. The CLI `import` requires `--k`
+### 3. eWLC and FJC are first-class models, not plugins
+
+The `MODEL_REGISTRY` ships with `"wlc"`, `"ewlc"` (Wang 1997,
+Odijk 1995), and `"fjc"` (Freely Jointed Chain, Padé [2,2]
+inverse Langevin) — all first-party. FJC is also registered as
+a pluggy entry point (`afmkit-fjc` style plugins) so it can be
+re-implemented out of tree. Use `fit(curve, model="wlc"|"ewlc"|"fjc", x_range=...)`
+directly. The pluggy hookspecs are still the right surface for
+*new* models (e.g. twist-WLC); see
+[`docs/contributing.md`](contributing.md) for the plugin skeleton.
+
+### 4. The CLI `import` requires `--k`
 
 JPK `.txt` exports do not store the cantilever spring constant —
 the file format predates the metadata convention. `load_jpk_txt`
@@ -380,9 +400,8 @@ therefore requires `k_cantilever` as a keyword argument, and the
 afmkit import data/*.txt -o curves.h5 --k 0.06
 ```
 
-`afmkit import` and the other CLI subcommands (`info`, `fit`,
-`export`) are **stubs in v0.1** — they print a friendly "coming
-with v0.1" message and exit. Use the Python API in the meantime.
+The full CLI (`import` / `fit` / `export` / `info` / `gui`) is
+end-to-end wired in v0.5; this is no longer a stub.
 
 ### 4. The fit `x_range` should be **interior** of the curve
 
@@ -416,69 +435,60 @@ ok = [r for r in fits if r.metadata["success"]]
 print(f"{len(ok)}/{len(fits)} fits converged")
 ```
 
-### 7. There are two `FitResult` classes in v0.1 (bridge required)
+### 7. There are two `FitResult` classes (bridge required)
 
 `afmkit.fitting.fit()` returns `afmkit.fitting.report.FitResult`
 with fields named `chi_square`, `reduced_chi_square`, `x_fit`,
 `y_fit`. The exporters `to_csv_fits` and `to_markdown` accept the
 **separate** `afmkit.io.exporters.FitResult` (fields named `chi2`,
-`redchi`, `x`, `y`). They are not the same class and not
-subclasses of each other; passing the fitting result directly
-raises `AttributeError: 'FitResult' object has no attribute 'chi2'`.
-
-Until the two are unified, bridge across with one explicit copy:
+`redchi`, `x`, `y`). The v0.4 exporters accept both via a
+backward-compat fallback (`getattr(fit, "chi_square", getattr(fit, "chi2", …))`),
+so passing the fitting result directly works in v0.5:
 
 ```python
 from afmkit.fitting import fit
-from afmkit.io.exporters import FitResult, to_csv_fits, to_markdown
-
-
-# `fit_result` is afmkit.fitting.FitResult; `exported` is the
-# afmkit.io.exporters.FitResult that the exporters want.
-def to_exporters(fit_result):
-    return FitResult(
-        model_name=fit_result.model_name,
-        params=fit_result.params,
-        param_stderr=fit_result.stderr,
-        chi2=fit_result.chi_square,
-        redchi=fit_result.reduced_chi_square,
-        n_data=fit_result.n_data,
-        covariance=fit_result.covariance,
-        x=fit_result.x_fit,
-        y=fit_result.y_fit,
-    )
-
+from afmkit.io.exporters import to_csv_fits, to_markdown
 
 fits = [fit(c, model="wlc", x_range=(20, 180)) for c in batch]
-to_csv_fits([to_exporters(r) for r in fits], "fits.csv")
-to_markdown(batch, [to_exporters(r) for r in fits], "report.md")
+to_csv_fits(fits, "fits.csv")              # v0.4+ accepts fitting FitResult directly
+to_markdown(batch, fits, "report.md")      # ditto
 ```
 
-This is a known v0.1 wart, tracked for a v0.2 cleanup.
+If you have legacy user code that builds the `io.exporters.FitResult`
+explicitly (the v0.1 / v0.2 bridge pattern), it still works — the
+two classes are not unified yet but the field-name fallback hides
+the difference.
 
 ## Status
 
-Per-feature status of the v0.1.0 release, sourced from the code
-(grep for `TODO`, `v0.2`, `deferred` in `src/afmkit/`) and the
-`CHANGELOG.md`. Features not listed here are either already
+Per-feature status of the v0.5.0 release, sourced from the code
+and the `CHANGELOG.md`. Features not listed here are either already
 documented above or are part of the core data model (which is fully
 shipped and tested).
 
 | Feature | Status | Where |
 |---|---|---|
-| `ForceCurve` / `CurveBatch` data model | **v0.1 (shipped)** | `src/afmkit/core/curve.py` |
-| JPK 4-column `.txt` loader (`load_jpk_txt`) | **v0.1 (shipped)** | `src/afmkit/io/jpk_txt.py` |
-| HDF5 store (`HDF5Store`, `save_hdf5`, `load_hdf5`) | **v0.1 (shipped)** | `src/afmkit/io/hdf5_store.py` |
-| WLC model (`WLCModel`) + `LmfitEngine` | **v0.1 (shipped)** | `src/afmkit/models/wlc.py`, `src/afmkit/fitting/engine.py` |
-| Exporters: CSV (wide), `csv_fits`, Matlab v5, Parquet, Markdown | **v0.1 (shipped)** | `src/afmkit/io/exporters.py` |
+| `ForceCurve` / `CurveBatch` data model | **shipped (v0.1)** | `src/afmkit/core/curve.py` |
+| JPK 4-column `.txt` loader (`load_jpk_txt`) | **shipped (v0.1)** | `src/afmkit/io/jpk_txt.py` |
+| HDF5 store (`HDF5Store`, `save_hdf5`, `load_hdf5`) | **shipped (v0.1)** | `src/afmkit/io/hdf5_store.py` |
+| WLC model (`WLCModel`) + `LmfitEngine` | **shipped (v0.1)** | `src/afmkit/models/wlc.py`, `src/afmkit/fitting/engine.py` |
+| Exporters: CSV (wide), `csv_fits`, Matlab v5, Parquet, Markdown | **shipped (v0.1)** | `src/afmkit/io/exporters.py` |
 | Matlab v7.3 (HDF5 backend) | not planned (v5 is portable enough; document if requested) | docstring TODO in `exporters.py:33` |
-| Igor `.ibw` reader & writer | v0.2 (blocked on the `igor` extra on Python 3.13) | `CHANGELOG.md:57` |
-| eWLC, FJC, twist-WLC models | v0.2 (plugin only — registry is wired in v0.1) | `src/afmkit/models/__init__.py`, `CHANGELOG.md:60` |
-| Automated sawtooth peak detection | v0.2 | `CHANGELOG.md:62` |
-| Cursor / baseline / Savitzky-Golay smoothing (analysis panel) | v0.2 (the `afmkit.processing` package is a docstring placeholder in v0.1) | `src/afmkit/processing/__init__.py` |
-| PyQt6 GUI (parity with `FX_Analysis` panel) | v0.2 | `CHANGELOG.md:63` |
-| CLI subcommands (`afmkit import`, `fit`, `export`, `info`) | v0.1 stubs (print a friendly message) — wired end-to-end in v0.2 | `src/afmkit/presentation/cli.py` |
+| Igor `.ibw` v2 round-trip | **shipped (v0.2)** | `src/afmkit/io/igor_ibw.py` |
+| Igor `.ibw` v5 round-trip | **shipped (v0.4)** | `src/afmkit/io/igor_ibw.py` |
+| `.ibw` note full re-hydration (v0.5+) | **shipped (v0.5)** | `src/afmkit/io/igor_ibw.py` |
+| eWLC model (`EWLCModel`, Wang 1997 / Odijk 1995) | **shipped (v0.2)** | `src/afmkit/models/ewlc.py` |
+| FJC model (`FJCModel`, Padé [2,2] inverse Langevin) | **shipped (v0.3)** | `src/afmkit/models/fjc.py` |
+| Automated sawtooth peak detection | **shipped (v0.2)** | `src/afmkit/analysis/peak_detection.py` |
+| `PeakReviewer` (interactive accept/reject/override) | **shipped (v0.3)** | `src/afmkit/analysis/peak_review.py` |
+| Textual TUI (`afmkit gui`) | **shipped (v0.2)** | `src/afmkit/presentation/gui/` |
+| Real matplotlib plot panel in TUI | **shipped (v0.4)** | `src/afmkit/presentation/gui/plot.py` |
+| CLI subcommands (`afmkit import`, `fit`, `export`, `info`, `gui`) | **shipped (v0.2+)** | `src/afmkit/presentation/cli.py` |
+| Peak review state in `to_csv_fits` / `to_markdown` | **shipped (v0.4)** | `src/afmkit/io/exporters.py` |
+| Peak review state in `to_mat` / `to_parquet` | **shipped (v0.5)** | `src/afmkit/io/exporters.py` |
+| `pre-commit` enforced in CI | **shipped (v0.4)** | `.github/workflows/ci.yml`, `.pre-commit-config.yaml` |
 | Refolding multi-cycle loader | not planned (load each cycle with `load_jpk_txt` and slice) | — |
+| PyQt6 GUI (parity with `FX_Analysis` panel) | not planned (the Textual TUI is the supported interactive surface) | — |
 
 If there is a specific Igor macro you cannot live without, please
 [open an issue](https://github.com/linjiema/afmkit/issues).

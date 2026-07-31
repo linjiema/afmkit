@@ -6,7 +6,192 @@ and the format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1
 
 ## [Unreleased]
 
-New feature work piles on top; the v0.5 tag is the next cut.
+New feature work piles on top; the v0.6 tag is the next cut.
+
+### Known limitations (v0.6+ roadmap)
+
+- **`.ibw` v5 reader improvements** — the v0.4 reader still
+  delegates to the upstream `igor.binarywave.load` for v5.
+  A stdlib-only v5 reader (matching the v2 / v5 writer
+  pattern) would let us drop the `igor` runtime dep for the
+  read path too, and would let us test the v5 round-trip
+  byte-by-byte instead of via the upstream black box.
+- **Matplotlib TUI plot panel native image** — the v0.4
+  plot panel renders the matplotlib figure as a half-block
+  text image via `rich.Console`. A native image render via
+  the Textual image protocol (Sixel / Kitty / iTerm
+  graphics) would be sharper and faster on terminals that
+  support it. The half-block path is the v0.4 default
+  because it works everywhere.
+
+## [0.5.0] — 2026-07-31
+
+**The v0.4 symmetric-completion release.** v0.4 plumbed
+`PeakReviewer` state through `to_csv_fits` and `to_markdown`;
+v0.5 closes the symmetric pair (`to_mat` and `to_parquet`)
+and adds the v0.5+ `.ibw` note re-hydration contract that
+makes the round-trip truly loss-less without the caller
+threading `k_cantilever` (or any other metadata key) through
+manually. The headline is: every metadata key the v0.4
+`save_ibw` writer embedded in the wave `note` now comes back
+through the v0.5 `load_ibw` reader; the per-peak review
+state is symmetric across all four exporter backends.
+
+**Install**
+
+```bash
+pip install "afmkit @ git+https://github.com/linjiema/afmkit.git@v0.5.0"
+```
+
+Optional extras:
+
+```bash
+pip install "afmkit[igor] @ ..."      # Igor .ibw round-trip
+pip install "afmkit[gui] @ ..."      # Textual TUI
+pip install "afmkit[plot] @ ..."     # matplotlib panel inside the TUI
+pip install "afmkit[parquet] @ ..."  # pyarrow Parquet export
+```
+
+### Added
+
+- **`to_mat` and `to_parquet` accept `fits` and `reviewers`
+  kwargs**. This is the v0.5 symmetric completion of the
+  v0.4 #1 peak-review plumbing: `to_csv_fits` and
+  `to_markdown` switched to one-row-per-(curve, peak) when
+  `reviewers` is provided; `to_mat` and `to_parquet` now do
+  the same. The three tables (`fits`, `peak_review`, and
+  the original curves) join on `curve_index`, and the
+  per-peak review state (accept / reject / override force /
+  note) flows through to both backends.
+  - **`to_mat`**: when `fits` is provided, a top-level
+    `fits` struct is added to the `.mat` file (one entry
+    per fit with the per-fit schema: model, params,
+    std-errors, goodness-of-fit, `curve_index`). When
+    `reviewers` is provided alongside `fits`, a top-level
+    `peak_review` struct is added (one entry per (curve,
+    peak) with the per-peak review columns joined to the
+    fit columns). Both structs are emitted as 1-D
+    structured ndarrays so the round-trip through
+    `scipy.io.loadmat` is clean (squeeze the loaded
+    `(1, N)` shape to recover the canonical 1-D layout).
+    The legacy v0.4 shape (no fits, no reviewers) is
+    preserved.
+  - **`to_parquet`**: when `fits` is provided, a sibling
+    `<path>.fits.parquet` file is written next to the
+    main curves file. When `reviewers` is provided
+    alongside `fits`, a sibling `<path>.peaks.parquet`
+    file is written with the per-(curve, peak) review
+    table. The three-file layout (curves / fits / peaks)
+    matches the three natural shapes (one row per point /
+    one row per fit / one row per (curve, peak)) and lets
+    pandas / polars users load each one independently.
+    The fastparquet fallback only supports the main
+    curves file; the `fits` / `reviewers` paths require
+    pyarrow and surface a clear `ImportError` when
+    pyarrow is not installed.
+  - The per-peak review column schema is the same as
+    `to_csv_fits`: `curve_index`, `peak_index`,
+    `extension_nm`, `force_pN`, `manual_force_pN`,
+    `accepted`, `confidence`, `prominence_pN`,
+    `width_points`, `height_drop_pN`, `note`. The
+    `manual_force_pN` and `note` columns now use `NaN`
+    (instead of empty string) as the "no override / no
+    note" marker, which keeps pyarrow's column type
+    inference happy and round-trips cleanly through
+    pandas. The CSV / Markdown paths still produce the
+    v0.4 output (empty string for `manual_force_pN`);
+    the change is internal to the v0.5 row builder.
+- **Refactored the per-peak row builder** out of
+  `_write_per_peak_csv` into the shared
+  `_build_peak_review_rows` helper. Same logic, but the
+  new helper returns a list of plain dicts that the CSV
+  / `.mat` / parquet writers can each post-process. Also
+  added `_build_fit_rows` (one-row-per-fit table used by
+  `to_mat` and `to_parquet`) and
+  `_validate_reviewers_mapping` (the stray-index check
+  previously inlined in `_write_per_peak_csv`).
+
+- **`.ibw` note full re-hydration on read**. The v0.4
+  `load_ibw` extracted only `k_cantilever` from the wave
+  `note`; everything else the writer had embedded (the
+  `temperature`, `experiment_id`, `n_averages`,
+  `operator`, `notes`, etc. that the v0.4 writer passes
+  through `_encode_note`'s `extra` kwargs) was silently
+  dropped. v0.5 introduces a generic note parser
+  (`_parse_note_metadata` + `_coerce_note_value` +
+  `_NOTE_TOKEN_RE`) that re-hydrates every scalar
+  `key=value` token with proper type coercion (int /
+  float / bool / str), the `k=` short form is renamed to
+  the canonical `k_cantilever` metadata key, and the
+  legacy `k_cantilever`-only path is preserved as a
+  backward-compatibility shim. The reader is now
+  symmetric with the writer: every metadata key that
+  goes in through `save_ibw(curve, path, *, version=...)`
+  comes back through `load_ibw(path)`. A legacy file
+  with a hand-written note that has no `k=` token still
+  loads cleanly (just without the `k_cantilever` key,
+  not a crash). 7 new tests in `tests/unit/test_igor_ibw.py`
+  cover the round-trip contract for both v2 and v5.
+
+- **`roundtrip_ibw(curve, path, *, version=2)`** — a thin
+  convenience wrapper around `save_ibw` + `load_ibw` that
+  demonstrates the round-trip contract in one call.
+  Returns the loaded `ForceCurve` after asserting the
+  `(extension, force)` arrays round-trip via
+  `numpy.testing.assert_allclose` and that every scalar
+  metadata key the writer emitted comes back through the
+  loader. Useful for end-to-end smoke tests and for
+  documenting the v0.5+ note-rehydration contract in
+  downstream code.
+
+- **Docs site refreshed to v0.5 state**. The
+  `docs/index.md` install pin, `docs/quickstart.md` (full
+  rewrite — old version said "Status: in progress. This
+  page will populate as v0.1 features land."), the
+  `docs/migration.md` status table (which claimed
+  "eWLC and FJC plugin-only" and "PyQt6 GUI v0.2" until
+  today), the `docs/api/index.md` module list (which
+  listed non-existent modules like
+  `afmkit.processing.smooth` and missed the actual
+  `presentation.gui` / `analysis.peak_detection` /
+  `analysis.peak_review` / `models.fjc` modules), and the
+  `docs/team.md` phase ("Phase 1 — Core & IO"). All
+  brought up to v0.5. `git-workflow.md` and
+  `release-checklist.md` are now in the nav under a new
+  "Development" section so the v0.3 retrospective doc
+  set is discoverable.
+
+### Infrastructure
+
+- 436 unit tests + 12 doctest pass on every cell of the
+  CI matrix (3 OS × 3 Python), up from 414 + 12 in
+  v0.4.0. The 22-test delta is split: 15 from the
+  `to_mat` / `to_parquet` reviewer plumbing, 7 from the
+  `.ibw` note rehydration + `roundtrip_ibw` helper.
+- `mkdocs build --strict` passes with no warnings. The
+  v0.5 docs site publishes the v0.5-scope narrative
+  (peak-review symmetry across all four exporter
+  backends, full note re-hydration contract, TUI
+  workflow, round-trip snippet) and the v0.3
+  retrospective (`git-workflow.md` + `release-checklist.md`)
+  in the nav.
+
+### Known limitations (v0.6+ roadmap)
+
+- **`.ibw` v5 stdlib-only reader**. The v0.4 reader
+  still delegates to the upstream `igor.binarywave.load`
+  for v5. A stdlib-only v5 reader (matching the v2 / v5
+  writer pattern) would let us drop the `igor` runtime
+  dep for the read path too, and would let us test the
+  v5 round-trip byte-by-byte instead of via the
+  upstream black box.
+- **Matplotlib TUI plot panel native image**. The v0.4
+  plot panel renders the matplotlib figure as a
+  half-block text image via `rich.Console`. A native
+  image render via the Textual image protocol (Sixel /
+  Kitty / iTerm graphics) would be sharper and faster
+  on terminals that support it. The half-block path
+  is the v0.4 default because it works everywhere.
 
 ## [0.4.0] — 2026-07-30
 
@@ -340,7 +525,8 @@ pip install "afmkit @ git+https://github.com/linjiema/afmkit.git@v0.1.0"
 - Automated sawtooth peak detection is v0.2.
 - GUI is v0.2.
 
-[Unreleased]: https://github.com/linjiema/afmkit/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/linjiema/afmkit/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/linjiema/afmkit/releases/tag/v0.5.0
 [0.4.0]: https://github.com/linjiema/afmkit/releases/tag/v0.4.0
 [0.3.0]: https://github.com/linjiema/afmkit/releases/tag/v0.3.0
 [0.2.0]: https://github.com/linjiema/afmkit/releases/tag/v0.2.0
