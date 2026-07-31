@@ -61,4 +61,8 @@ repos:
           - xarray
           - lmfit
           - types-tqdm
+          # ``textual_image`` ships type hints; add it explicitly so
+          # the pre-commit env sees the same module graph as the
+          # v0.6+ runtime (the ``[plot-native]`` extra).
+          - textual-image
         args: [--strict, --no-incremental]

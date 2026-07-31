@@ -10,7 +10,7 @@ running terminal: rendering only touches matplotlib + Pillow, and the
 underlying :func:`_render_to_pillow` helper is callable from a unit
 test without instantiating a Textual ``App``. The Textual renderable
 layer (the :meth:`render` method) is a thin wrapper that yields a
-``rich.console.Group`` of the title plus a half-block terminal image
+``rich.console.Group`` of the title plus a terminal image
 of the cached bitmap.
 
 Why matplotlib + Pillow rather than rich's built-in image protocol?
@@ -24,12 +24,31 @@ Windows Terminal) and degrades to a colourless block on legacy ones.
 The matplotlib side is the workhorse: it is what actually draws the
 curve, the peak markers, and the WLC fit overlay.
 
+Native terminal image protocol (v0.6+)
+--------------------------------------
+When the optional ``[plot-native]`` extra (``textual-image``) is
+installed and the running terminal supports a native image
+protocol — Sixel, Terminal Graphics Protocol (Kitty, iTerm2,
+wezterm, Konsole), Halfcell, or Unicode — the widget can render
+the matplotlib output through that protocol instead of the
+half-block fallback.  This produces a crisper, full-colour
+plot at the native terminal resolution instead of the
+``▀`` approximation.
+
+The default is **auto-detect** (``prefer_native=None``): use the
+native path when the package is installed, fall back to the
+half-block path otherwise.  The half-block path is the v0.4
+default contract and works on every terminal without any
+optional dependencies, so the ``[plot-native]`` extra is a
+strict upgrade — never a regression.
+
 Optional dependency
 -------------------
-Both ``matplotlib`` and ``Pillow`` are *optional* ``[plot]`` extras —
+``matplotlib`` and ``Pillow`` are *optional* ``[plot]`` extras —
 the module imports cleanly without them. :meth:`ForceExtensionPlot.render_curve`
 raises a clear :class:`ImportError` with the install command if either
-is missing at call time.
+is missing at call time.  ``textual-image`` is an additional
+*optional* ``[plot-native]`` extra for the native image renderable.
 """
 
 from __future__ import annotations
@@ -76,6 +95,24 @@ except ImportError as _textual_exc:  # pragma: no cover
     _TextualWidget: Any = object  # type: ignore[no-redef]
 else:
     _TEXTUAL_IMPORT_ERROR = None
+
+
+# ``textual-image`` is an optional ``[plot-native]`` extra; same
+# pattern as the ``textual`` and ``matplotlib`` guards above.  The
+# module-level ``Image`` symbol on the ``textual_image.renderable``
+# package is the auto-dispatch: it resolves to ``SixelImage`` /
+# ``TGPImage`` (Kitty + iTerm) / ``HalfcellImage`` / ``UnicodeImage``
+# depending on what the running terminal supports, so importing the
+# module is enough — we don't need a separate detection step.  When
+# the package is missing the half-block :class:`_PillowImageRenderable`
+# below is the v0.4 fallback (zero-dep).
+try:  # pragma: no cover - import-time guard
+    import textual_image.renderable as _native_renderable_module
+
+    _NATIVE_IMPORT_ERROR: ImportError | None = None
+except ImportError as _native_exc:  # pragma: no cover
+    _native_renderable_module: Any = None  # type: ignore[no-redef]
+    _NATIVE_IMPORT_ERROR = _native_exc
 
 
 from afmkit.analysis.peak_detection import Peak
@@ -221,6 +258,89 @@ class _PillowImageRenderable:
             yield from line
 
 
+def _make_native_image_renderable(pil_image: Any) -> Any:
+    """Wrap a Pillow image in a native terminal-image renderable.
+
+    Uses :class:`textual_image.renderable.Image`, which auto-dispatches
+    at import time to the best available protocol for the running
+    terminal — Sixel, Terminal Graphics Protocol (Kitty + iTerm +
+    wezterm + Konsole), Halfcell, or Unicode block characters.  We
+    don't have to choose the protocol ourselves: the textual-image
+    package does the runtime query and resolves ``Image`` to the
+    right concrete class.
+
+    Returns
+    -------
+    textual_image.renderable.Image
+        An instance of whichever concrete class the runtime
+        environment picked.  Implements ``__rich_console__`` so it
+        can be yielded directly from a Textual ``Widget.render()``
+        method.
+
+    Raises
+    ------
+    ImportError
+        If the ``[plot-native]`` extra (the ``textual-image`` package)
+        is not installed.  The :func:`_choose_renderable` helper
+        guards against this by checking the module-level import flag
+        before calling.
+    """
+    if _native_renderable_module is None:
+        raise ImportError(
+            "Native terminal image rendering requires the [plot-native] "
+            "extra (`pip install 'afmkit[plot-native]'`); the "
+            "`textual-image` package is not installed."
+        ) from _NATIVE_IMPORT_ERROR
+    return _native_renderable_module.Image(pil_image)
+
+
+def _choose_renderable(
+    pil_image: Any,
+    prefer_native: bool | None,
+) -> Any:
+    """Pick the best rich renderable for a Pillow image.
+
+    Parameters
+    ----------
+    pil_image
+        The bitmap to wrap.  Any value with the right interface
+        (i.e. a ``PIL.Image.Image``) is accepted; the function
+        does not introspect it.
+    prefer_native
+        ``True`` to force the native terminal-image renderable
+        (Sixel / TGP / Halfcell via ``textual-image``); ``False``
+        to force the v0.4 half-block :class:`_PillowImageRenderable`;
+        ``None`` to auto-detect — use the native renderable when
+        the ``[plot-native]`` extra is installed, fall back to
+        the half-block renderable otherwise.
+
+    Returns
+    -------
+    rich renderable
+        Either a :class:`_PillowImageRenderable` or a
+        :class:`textual_image.renderable.Image` (the concrete
+        class depends on the runtime terminal capability).
+
+    Raises
+    ------
+    ImportError
+        If ``prefer_native=True`` and the ``[plot-native]`` extra
+        is not installed.  The error message points to the
+        ``afmkit[plot-native]`` extra so the user can install the
+        missing dependency.  For ``prefer_native=None`` / ``False``
+        the import is never required, so the half-block path always
+        works on a minimal install.
+    """
+    if prefer_native is False:
+        return _PillowImageRenderable(pil_image)
+    if prefer_native is True:
+        return _make_native_image_renderable(pil_image)
+    # prefer_native is None: auto-detect.
+    if _native_renderable_module is not None:
+        return _make_native_image_renderable(pil_image)
+    return _PillowImageRenderable(pil_image)
+
+
 # -- Widget ---------------------------------------------------------------
 
 
@@ -277,6 +397,7 @@ class ForceExtensionPlot(_TextualWidget):
         name: str | None = None,
         id: str | None = None,
         classes: str | None = None,
+        prefer_native: bool | None = None,
     ) -> None:
         """Initialise the widget with the requested character dimensions.
 
@@ -287,12 +408,40 @@ class ForceExtensionPlot(_TextualWidget):
         The cached :attr:`_image` starts as ``None`` and the
         :meth:`render` placeholder shows the literal string
         ``"no data"`` until the first :meth:`render_curve` call.
+
+        Parameters
+        ----------
+        width
+            Plot width in characters (default 80).
+        height
+            Plot height in lines (default 20).
+        title
+            Optional title shown above the plot.
+        name, id, classes
+            Forwarded to the underlying :class:`textual.widget.Widget`.
+        prefer_native
+            ``True`` to force the native terminal-image renderable
+            (Sixel / Kitty / iTerm graphics via the
+            ``[plot-native]`` extra, ``textual-image`` package);
+            ``False`` to force the v0.4 half-block
+            :class:`_PillowImageRenderable`; ``None`` (default) to
+            auto-detect — use the native renderable when the
+            ``[plot-native]`` extra is installed, fall back to
+            the half-block renderable otherwise.
+
+            ``None`` is the right choice for almost all callers:
+            the half-block path works on every terminal, and the
+            native path is a strict upgrade when both the
+            ``[plot-native]`` extra is installed and the terminal
+            supports a native image protocol.
         """
         if _TEXTUAL_IMPORT_ERROR is not None:
             raise ImportError(
                 "Textual is required for the ForceExtensionPlot widget. "
                 "Install with `pip install 'afmkit[gui]'`."
             ) from _TEXTUAL_IMPORT_ERROR
+        if prefer_native not in (None, True, False):
+            raise TypeError(f"prefer_native must be None, True, or False; got {prefer_native!r}")
         super().__init__(name=name, id=id, classes=classes)
         if int(width) <= 0 or int(height) <= 0:
             raise ValueError(
@@ -301,6 +450,7 @@ class ForceExtensionPlot(_TextualWidget):
         self._width_chars: int = int(width)
         self._height_chars: int = int(height)
         self._title: str = str(title)
+        self._prefer_native: bool | None = prefer_native
         # The cached Pillow image; ``None`` means "no data — show
         # the empty placeholder". Always a fresh copy on assignment
         # so the caller can drop their reference to the bytes buffer.
@@ -512,10 +662,16 @@ class ForceExtensionPlot(_TextualWidget):
         1. The widget's :attr:`title` as a bold :class:`rich.text.Text`
            (if a title was given at construction time).
         2. Either a half-block :class:`_PillowImageRenderable` of
-           the cached bitmap, or the literal placeholder
-           :class:`rich.text.Text` ``"no data"`` when :attr:`_image`
-           is ``None`` (i.e. before the first :meth:`render_curve`
-           or after :meth:`clear`).
+           the cached bitmap, a native terminal-image renderable
+           (Sixel / Kitty / iTerm / Halfcell via
+           :mod:`textual_image.renderable`), or the literal
+           placeholder :class:`rich.text.Text` ``"no data"`` when
+           :attr:`_image` is ``None`` (i.e. before the first
+           :meth:`render_curve` or after :meth:`clear`).
+
+        The choice between half-block and native is controlled by
+        the ``prefer_native`` constructor argument (see
+        :meth:`__init__`); default is auto-detect.
 
         Returns
         -------
@@ -534,5 +690,5 @@ class ForceExtensionPlot(_TextualWidget):
         if self._image is None:
             parts.append(Text("no data", style="dim"))
         else:
-            parts.append(_PillowImageRenderable(self._image))
+            parts.append(_choose_renderable(self._image, self._prefer_native))
         return Group(*parts)

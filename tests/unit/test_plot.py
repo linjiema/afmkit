@@ -19,7 +19,7 @@ the widget's class hierarchy, so we ``importorskip`` it too.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -326,3 +326,187 @@ def test_render_curve_raises_import_error_when_matplotlib_missing(
     assert excinfo.value.__cause__ is fake_err
     # The widget must NOT have cached a half-built image on failure.
     assert plot._image is None
+
+
+# -- Native terminal image renderable (v0.6+ / [plot-native] extra) ----
+#
+# The :class:`ForceExtensionPlot` widget picks between the v0.4
+# half-block :class:`_PillowImageRenderable` and the v0.6+ native
+# terminal-image renderable (Sixel / Kitty / iTerm graphics via the
+# ``textual-image`` package, the new ``[plot-native]`` extra).  The
+# choice is controlled by the ``prefer_native`` constructor
+# argument; these tests exercise the dispatch logic.
+
+
+class TestNativeImageRenderable:
+    """Tests for the ``[plot-native]`` extra integration."""
+
+    def test_widget_prefer_native_type_guard(self) -> None:
+        """``prefer_native`` only accepts ``None``, ``True``, ``False``.
+
+        ``int`` values are tolerated (``1 == True`` and ``0 == False``
+        in Python) so the guard accepts them as the obvious bool
+        equivalent; only true non-bool/non-None inputs (strings,
+        lists, custom objects) are rejected.
+        """
+        with pytest.raises(TypeError, match="prefer_native"):
+            ForceExtensionPlot(width=40, height=10, prefer_native="yes")  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="prefer_native"):
+            ForceExtensionPlot(width=40, height=10, prefer_native=[])  # type: ignore[arg-type]
+
+    def _make_pillow_image(self, synthetic_force_curve: ForceCurve) -> Any:
+        """Render a small Pillow image from a synthetic curve for dispatch tests."""
+        plot = ForceExtensionPlot(width=8, height=4)
+        return plot._render_to_pillow(
+            curve=synthetic_force_curve,
+            peaks=None,
+            fit=None,
+            x_range=None,
+            width_px=80,
+            height_px=40,
+        )
+
+    def test_choose_renderable_force_half_block(self, synthetic_force_curve: ForceCurve) -> None:
+        """``prefer_native=False`` always returns the half-block renderable,
+        even when ``textual-image`` is installed.
+        """
+        image = self._make_pillow_image(synthetic_force_curve)
+        # ``prefer_native=False`` ignores the import flag and returns
+        # the v0.4 half-block path regardless.
+        renderable = plot_mod._choose_renderable(image, prefer_native=False)
+        assert isinstance(renderable, plot_mod._PillowImageRenderable)
+
+    def test_choose_renderable_force_native_missing_package(
+        self, monkeypatch: pytest.MonkeyPatch, synthetic_force_curve: ForceCurve
+    ) -> None:
+        """``prefer_native=True`` raises :class:`ImportError` with a
+        clear install hint when ``textual-image`` is missing.
+        """
+        # Simulate the "textual-image not installed" case without
+        # actually uninstalling the package (which would break
+        # other tests in this module that use ``importorskip``).
+        fake_err = ImportError("No module named 'textual_image' (simulated)")
+        monkeypatch.setattr(plot_mod, "_native_renderable_module", None)
+        monkeypatch.setattr(plot_mod, "_NATIVE_IMPORT_ERROR", fake_err)
+
+        image = self._make_pillow_image(synthetic_force_curve)
+        with pytest.raises(ImportError) as excinfo:
+            plot_mod._choose_renderable(image, prefer_native=True)
+        # The error message must point the user at the
+        # ``[plot-native]`` extra — a bare ImportError would
+        # leave them wondering which package to install.
+        msg = str(excinfo.value)
+        assert "textual-image" in msg or "[plot-native]" in msg
+        # And the chained cause is the simulated ImportError so
+        # the original error is preserved for diagnostics.
+        assert excinfo.value.__cause__ is fake_err
+
+    def test_choose_renderable_auto_with_native_installed(
+        self, monkeypatch: pytest.MonkeyPatch, synthetic_force_curve: ForceCurve
+    ) -> None:
+        """``prefer_native=None`` with ``textual-image`` installed
+        returns a native-image renderable (not the half-block fallback).
+        """
+
+        # Simulate the "textual-image is installed" case with a
+        # stub module that exposes an ``Image`` class.  The dispatch
+        # logic only checks that ``_native_renderable_module`` is
+        # not None and calls ``_native_renderable_module.Image(pil_image)``,
+        # so a trivial stub is enough to exercise the auto-detect
+        # path.
+        class _StubImage:
+            def __init__(self, pil_image: object) -> None:
+                self.pil_image = pil_image
+
+        class _StubModule:
+            Image = _StubImage
+
+        monkeypatch.setattr(plot_mod, "_native_renderable_module", _StubModule())
+        monkeypatch.setattr(plot_mod, "_NATIVE_IMPORT_ERROR", None)
+
+        image = self._make_pillow_image(synthetic_force_curve)
+        renderable = plot_mod._choose_renderable(image, prefer_native=None)
+        # Not the half-block fallback.
+        assert not isinstance(renderable, plot_mod._PillowImageRenderable)
+        assert isinstance(renderable, _StubImage)
+        # And the underlying PIL image is the one we passed in.
+        assert renderable.pil_image is image  # type: ignore[attr-defined]
+
+    def test_choose_renderable_auto_without_native(
+        self, monkeypatch: pytest.MonkeyPatch, synthetic_force_curve: ForceCurve
+    ) -> None:
+        """``prefer_native=None`` without ``textual-image`` falls back
+        to the half-block renderable (the v0.4 default contract).
+        """
+        monkeypatch.setattr(plot_mod, "_native_renderable_module", None)
+        monkeypatch.setattr(
+            plot_mod,
+            "_NATIVE_IMPORT_ERROR",
+            ImportError("simulated missing package"),
+        )
+
+        image = self._make_pillow_image(synthetic_force_curve)
+        renderable = plot_mod._choose_renderable(image, prefer_native=None)
+        assert isinstance(renderable, plot_mod._PillowImageRenderable)
+
+    def test_widget_prefer_native_true_raises_when_missing(
+        self, monkeypatch: pytest.MonkeyPatch, synthetic_force_curve: ForceCurve
+    ) -> None:
+        """``ForceExtensionPlot(prefer_native=True).render()`` raises
+        a clear :class:`ImportError` when ``[plot-native]`` is missing
+        *and* there is data to render.  Constructing the widget does
+        not raise — only the render call does, so the App can mount
+        the widget and fail at the first render tick instead of
+        crashing at import time.
+        """
+        monkeypatch.setattr(plot_mod, "_native_renderable_module", None)
+        monkeypatch.setattr(
+            plot_mod,
+            "_NATIVE_IMPORT_ERROR",
+            ImportError("simulated missing package"),
+        )
+
+        plot = ForceExtensionPlot(width=40, height=10, prefer_native=True)
+        # Construct succeeds.
+        plot.render_curve(synthetic_force_curve)  # populates _image
+        assert plot._image is not None
+        # But render() raises with a clear install hint.
+        with pytest.raises(ImportError) as excinfo:
+            plot.render()
+        assert "textual-image" in str(excinfo.value) or "[plot-native]" in str(excinfo.value)
+
+    def test_widget_prefer_native_false_always_half_block(
+        self, monkeypatch: pytest.MonkeyPatch, synthetic_force_curve: ForceCurve
+    ) -> None:
+        """``ForceExtensionPlot(prefer_native=False).render()`` returns
+        a half-block renderable, even when ``[plot-native]`` is
+        installed.  This is the explicit "force the v0.4 path" opt-out.
+        """
+        # Even with native available, the user said "no native" — we
+        # must respect that and fall back to half-block.  Track
+        # whether the stub ``Image`` was ever called.
+        stub_calls: list[object] = []
+
+        class _StubImage:
+            def __init__(self, pil_image: object) -> None:
+                stub_calls.append(pil_image)
+
+        class _StubModule:
+            Image = _StubImage
+
+        monkeypatch.setattr(plot_mod, "_native_renderable_module", _StubModule())
+        monkeypatch.setattr(plot_mod, "_NATIVE_IMPORT_ERROR", None)
+
+        plot = ForceExtensionPlot(width=40, height=10, prefer_native=False)
+        plot.render_curve(synthetic_force_curve)
+        out = plot.render()
+        assert isinstance(out, _RichGroup)
+        # Walk the Group to find the image renderable; it must be
+        # the half-block one, not the stub.
+        renderables = out.renderables  # type: ignore[attr-defined]
+        image_renderables = [
+            r for r in renderables if isinstance(r, plot_mod._PillowImageRenderable)
+        ]
+        assert len(image_renderables) == 1
+        # And the stub's __init__ must not have been called.
+        assert stub_calls == []

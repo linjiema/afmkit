@@ -98,6 +98,17 @@ plot = [
 gui = [
     "textual>=0.50",
 ]
+# Native terminal image rendering for the TUI plot panel (Sixel /
+# Kitty / iTerm graphics via the ``textual-image`` library).
+# Separate from ``[plot]`` so the v0.4 half-block default keeps
+# its zero-dependency contract: a minimal ``[plot]`` install
+# never needs ``textual-image``.  The plot widget auto-detects
+# terminal capability and only uses this path when both the
+# package is installed and the terminal supports a native
+# image protocol.
+plot-native = [
+    "textual-image>=0.13",
+]
 # Documentation build.
 docs = [
     "mkdocs>=1.5",
@@ -108,7 +119,7 @@ docs = [
 ]
 # Convenience: install everything an end-user might want.
 all = [
-    "afmkit[io,parquet,igor,matlab,plot,gui]",
+    "afmkit[io,parquet,igor,matlab,plot,plot-native,gui]",
 ]
 # Developer / CI dependencies.
 dev = [
