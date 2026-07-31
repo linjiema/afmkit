@@ -161,6 +161,14 @@ dev = [
     # save() is still NotImplementedError there too). Pin to >=0.3
     # to match the version that's actually installable.
     "igor>=0.3",
+    # ``textual-image`` is the v0.6+ native terminal image renderable
+    # for the plot widget (the ``[plot-native]`` extra). Install it
+    # here so the CI test matrix exercises TestNativeImageRenderable
+    # end-to-end and mypy --strict can resolve
+    # ``import textual_image`` in plot.py.  End users get the
+    # native path via the ``[plot-native]`` extra; the half-block
+    # fallback path (the v0.4 default) is the zero-dep contract.
+    "textual-image>=0.13",
 ]
 
 [project.urls]
