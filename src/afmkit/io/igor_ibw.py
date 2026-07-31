@@ -663,6 +663,22 @@ def _load_ibw_v5_stdlib(path: Path) -> dict[str, Any]:
     ValueError
         If the file is not a v5 wave, if any header / data section
         is truncated, or if the wave's ``type`` is not ``NT_FP64``.
+
+    Examples
+    --------
+    Most callers should use :func:`load_ibw` (the public surface)
+    rather than this private helper; :func:`load_ibw` dispatches
+    v5 here and v1/v2/v3 to :func:`igor.binarywave.load`.  This
+    function is exposed for the stdlib-only test matrix and for
+    tooling that wants to inspect a v5 file's wave header without
+    going through the public loader:
+
+    >>> from afmkit.io.igor_ibw import _load_ibw_v5_stdlib
+    >>> data = _load_ibw_v5_stdlib("trace.ibw")  # doctest: +SKIP
+    >>> data["wave"]["wave_header"]["type"]  # doctest: +SKIP
+    4
+    >>> data["wave"]["wData"].dtype, data["wave"]["wData"].shape  # doctest: +SKIP
+    (dtype('float64'), (2000,))
     """
     with path.open("rb") as fh:
         # 1. 2-byte version.  The afmkit writer uses ``<h``; other
