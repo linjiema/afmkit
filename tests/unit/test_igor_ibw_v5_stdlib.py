@@ -43,6 +43,7 @@ from afmkit.io.igor_ibw import (
     _WAVE_HEADER5_SIZE,
     _get_binarywave,
     _load_ibw_v5_stdlib,
+    _split_bytes,
     load_ibw,
     roundtrip_ibw,
     save_ibw,
@@ -68,6 +69,136 @@ def synthetic_curve() -> ForceCurve:
             "direction": "retract",
         },
     )
+
+
+# -- Helpers --------------------------------------------------------------
+
+
+def _build_minimal_v5_ibw(
+    *,
+    npnts: int,
+    type: int = 4,  # NT_FP64
+    wdata: bytes = b"",
+    note: bytes = b"",
+    bname: bytes = b"",
+    data_units: bytes = b"pN",
+    dim_units_0: bytes = b"nm",
+    npnts_wave_header: int | None = None,
+) -> bytes:
+    """Build a minimal v5 ``.ibw`` file as raw bytes.
+
+    Packs the same BinHeader5 + WaveHeader5 + wData + note layout
+    that :func:`afmkit.io.igor_ibw._save_ibw_v5` emits, but lets
+    callers override individual fields for error-path tests
+    (``type != NT_FP64``, truncated wData, etc.).
+
+    Parameters
+    ----------
+    npnts
+        The value written into the WaveHeader5 ``npnts`` field.
+        Does **not** have to match the actual length of ``wdata``;
+        error-path tests can pass a too-short ``wdata`` payload to
+        exercise the truncation guard.
+    type
+        The wave ``type`` field.  ``4`` (NT_FP64) is the afmkit
+        default; pass ``2`` (NT_I32) or any other NT_ code to test
+        the type-rejection path.
+    wdata
+        The raw wData bytes.  Default: empty.
+    note
+        The wave note bytes.  Default: empty.
+    bname
+        Up to 31 bytes of wave name; padded with NUL to 32 B.
+    data_units
+        Up to 3 bytes of dataUnits; padded with NUL to 4 B.
+    dim_units_0
+        Up to 3 bytes of dimUnits[0]; padded with NUL to 4 B.
+    npnts_wave_header
+        Override the npnts field in WaveHeader5 separately from
+        the BinHeader5 ``wfmSize`` calculation.  When ``None``
+        (default), the same value as ``npnts`` is used.
+
+    Returns
+    -------
+    bytes
+        The full file bytes: 2-byte version + BinHeader5 +
+        WaveHeader5 + wData + note.  The BinHeader5 checksum is
+        left as 0 (the stdlib reader doesn't validate it).
+    """
+    if npnts_wave_header is None:
+        npnts_wave_header = npnts
+
+    # BinHeader5 — 16 fields (1 H + 15 l).
+    bin_bytes = struct.pack(
+        _FMT_BIN5,
+        0,  # checksum (placeholder; the stdlib reader doesn't validate it)
+        _WAVE_HEADER5_SIZE + len(wdata),  # wfmSize
+        0,  # formulaSize
+        len(note),  # noteSize
+        0,  # dataEUnitsSize
+        *((0,) * 11),  # dimEUnitsSize[4] + dimLabelsSize[4] + sIndicesSize + optionsSize[2]
+    )
+
+    # WaveHeader5 — 120 fields.  Build the variable-length pieces
+    # (bname, dataUnits, dimUnits) via the writer's ``_split_bytes``
+    # helper so the NUL-padding matches what :func:`_save_ibw_v5`
+    # produces.
+    bname_padded = bname[:31] + b"\x00" * (32 - len(bname[:31]))
+    data_units_padded = data_units[:3] + b"\x00" * (4 - len(data_units[:3]))
+    dim0_padded = dim_units_0[:3] + b"\x00" * (4 - len(dim_units_0[:3]))
+    dim_units_4 = _split_bytes(dim0_padded) + _split_bytes(b"\x00" * 12)
+
+    n_dim = (npnts_wave_header, 0, 0, 0)
+    sf_a = (1.0, 0.0, 0.0, 0.0)
+    sf_b = (0.0, 0.0, 0.0, 0.0)
+
+    wave_bytes = struct.pack(
+        _FMT_WAVE5,
+        0,  # next (pointer; 0)
+        0,  # creationDate
+        0,  # modDate
+        npnts_wave_header,  # npnts
+        type,  # type
+        0,  # dLock
+        *(b"\x00" for _ in range(6)),  # whpad1
+        1,  # whVersion
+        *_split_bytes(bname_padded),  # bname (32 B, NUL-padded)
+        0,  # whpad2
+        0,  # dFolder
+        *n_dim,
+        *sf_a,
+        *sf_b,
+        *_split_bytes(data_units_padded),  # dataUnits (4 B)
+        *dim_units_4,  # dimUnits[0..3] (16 B; only [0] non-empty)
+        1,  # fsValid
+        0,  # whpad3
+        0.0,  # topFullScale
+        0.0,  # botFullScale
+        0,  # dataEUnits (pointer; 0)
+        0,
+        0,
+        0,
+        0,  # dimEUnits (4 pointers → 0)
+        0,
+        0,
+        0,
+        0,  # dimLabels (4 pointers → 0)
+        0,  # waveNoteH
+        *(0 for _ in range(16)),  # whUnused
+        0,
+        0,
+        0,  # aModified, wModified, swModified
+        b"\x00",
+        b"\x00",  # useBits, kindBits
+        0,  # formula (pointer; 0)
+        0,  # depID
+        0,  # whpad4
+        0,  # srcFldr
+        0,  # fileName (pointer; 0)
+        0,  # sIndices (pointer; 0)
+    )
+
+    return struct.pack("<h", 5) + bin_bytes + wave_bytes + wdata + note
 
 
 # -- Module-level contract: the import is stdlib-only --------------------
@@ -401,84 +532,15 @@ class TestStdlibV5ReaderErrors:
 
     def test_truncated_wdata_raises(self, tmp_path: Path) -> None:
         p = tmp_path / "short_data.ibw"
-        # Full BinHeader5 + WaveHeader5 with npnts=10, but only
-        # 5 float64s of data follow.
-        # BinHeader5 has 16 fields total: 1 H (checksum) + 15 l.
-        # After the first 5 values (checksum, wfmSize, formulaSize,
-        # noteSize, dataEUnitsSize), 11 l's remain
-        # (4 dimEUnitsSize + 4 dimLabelsSize + sIndicesSize + 2 options).
-        bin_bytes = struct.pack(
-            _FMT_BIN5,
-            0,  # checksum
-            _WAVE_HEADER5_SIZE,  # wfmSize
-            0,  # formulaSize
-            0,  # noteSize
-            0,  # dataEUnitsSize
-            *((0,) * 11),  # remaining 11 l's
+        # WaveHeader5 claims npnts=10 (5 ext + 5 force pairs), but
+        # only 5 float64s follow. The reader's truncation guard
+        # should catch this before any data is parsed.
+        file_bytes = _build_minimal_v5_ibw(
+            npnts=10,
+            type=4,  # NT_FP64
+            wdata=b"\x00" * (8 * 5),  # 5 float64s, not 10
         )
-        wave_bytes = struct.pack(
-            _FMT_WAVE5,
-            0,  # next
-            0,  # creationDate
-            0,  # modDate
-            10,  # npnts (= 5 ext + 5 force pairs)
-            4,  # type (NT_FP64)
-            0,  # dLock
-            *(b"\x00" for _ in range(6)),  # whpad1
-            1,  # whVersion
-            *(b"\x00" for _ in range(32)),  # bname
-            0,  # whpad2
-            0,  # dFolder
-            10,
-            0,
-            0,
-            0,  # nDim
-            1.0,
-            0.0,
-            0.0,
-            0.0,  # sfA
-            0.0,
-            0.0,
-            0.0,
-            0.0,  # sfB
-            b"p",
-            b"N",
-            b"\x00",
-            b"\x00",  # dataUnits
-            b"n",
-            b"m",
-            b"\x00",
-            b"\x00",  # dimUnits[0]
-            *(b"\x00" for _ in range(12)),  # dimUnits[1..3]
-            1,  # fsValid
-            0,  # whpad3
-            0.0,  # topFullScale
-            0.0,  # botFullScale
-            0,  # dataEUnits
-            0,
-            0,
-            0,
-            0,  # dimEUnits
-            0,
-            0,
-            0,
-            0,  # dimLabels
-            0,  # waveNoteH
-            *(0 for _ in range(16)),  # whUnused
-            0,  # aModified
-            0,  # wModified
-            0,  # swModified
-            b"\x00",  # useBits
-            b"\x00",  # kindBits
-            0,  # formula
-            0,  # depID
-            0,  # whpad4
-            0,  # srcFldr
-            0,  # fileName
-            0,  # sIndices
-        )
-        # only 5 float64s after the headers (need 10)
-        p.write_bytes(struct.pack("<h", 5) + bin_bytes + wave_bytes + b"\x00" * (8 * 5))
+        p.write_bytes(file_bytes)
         with pytest.raises(ValueError, match="truncated wData"):
             _load_ibw_v5_stdlib(p)
 
@@ -487,83 +549,15 @@ class TestStdlibV5ReaderErrors:
         clear error rather than silently misinterpreting the data.
         """
         p = tmp_path / "wrong_type.ibw"
-        # Build BinHeader5 + WaveHeader5 with type=2 (NT_I32) and a
-        # minimal wData payload. We do this directly via struct.pack
-        # so we don't have to wait for an afmkit writer to learn how
-        # to emit non-FP64 waves.
-        # BinHeader5 has 16 fields total: 1 H (checksum) + 15 l.
-        # After the first 5 values, 11 l's remain.
-        bin_bytes = struct.pack(
-            _FMT_BIN5,
-            0,  # checksum
-            _WAVE_HEADER5_SIZE,  # wfmSize
-            0,  # formulaSize
-            0,  # noteSize
-            0,  # dataEUnitsSize
-            *((0,) * 11),  # remaining 11 l's
+        # Build a v5 file with type=2 (NT_I32, NOT NT_FP64). The
+        # afmkit writer only emits NT_FP64, so we synthesise the
+        # bytes here to exercise the type-rejection path.
+        file_bytes = _build_minimal_v5_ibw(
+            npnts=2,  # 1 ext + 1 force pair
+            type=2,  # NT_I32
+            wdata=b"\x00" * 16,
         )
-        wave_bytes = struct.pack(
-            _FMT_WAVE5,
-            0,  # next
-            0,
-            0,  # creationDate, modDate
-            2,  # npnts = 1 pair
-            2,  # type = NT_I32 (NOT NT_FP64)
-            0,  # dLock
-            *(b"\x00" for _ in range(6)),
-            1,  # whVersion
-            *(b"\x00" for _ in range(32)),
-            0,
-            0,  # whpad2, dFolder
-            2,
-            0,
-            0,
-            0,  # nDim
-            1.0,
-            0.0,
-            0.0,
-            0.0,  # sfA
-            0.0,
-            0.0,
-            0.0,
-            0.0,  # sfB
-            b"p",
-            b"N",
-            b"\x00",
-            b"\x00",
-            b"n",
-            b"m",
-            b"\x00",
-            b"\x00",
-            *(b"\x00" for _ in range(12)),
-            1,
-            0,  # fsValid, whpad3
-            0.0,
-            0.0,  # topFullScale, botFullScale
-            0,  # dataEUnits
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,  # waveNoteH
-            *(0 for _ in range(16)),
-            0,
-            0,
-            0,  # a/w/swModified
-            b"\x00",
-            b"\x00",  # use/kindBits
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,  # formula, depID, whpad4, srcFldr, fileName, sIndices
-        )
-        p.write_bytes(struct.pack("<h", 5) + bin_bytes + wave_bytes + b"\x00" * 16)
+        p.write_bytes(file_bytes)
         with pytest.raises(ValueError, match="NT_FP64"):
             _load_ibw_v5_stdlib(p)
 
