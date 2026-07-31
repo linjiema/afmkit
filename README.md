@@ -21,13 +21,13 @@ peaks, and exports the results in formats that drop straight into
 The goal is a tool a grad student can use from a notebook **and** a lab can
 build a reproducible pipeline on top of.
 
-> **Install from GitHub** — afmkit is not on PyPI. Pin a tag (`@v0.4.0`)
+> **Install from GitHub** — afmkit is not on PyPI. Pin a tag (`@v0.5.0`)
 > for reproducibility, or `@main` for the bleeding edge. See
-> [What's new in v0.4.0](https://github.com/linjiema/afmkit/releases/tag/v0.4.0).
+> [What's new in v0.5.0](https://github.com/linjiema/afmkit/releases/tag/v0.5.0).
 
 ---
 
-## ✨ Features (v0.4.0)
+## ✨ Features (v0.5.0)
 
 ### Reading and writing
 
@@ -102,7 +102,7 @@ build a reproducible pipeline on top of.
 ## 🚀 Quick start
 
 ```bash
-pip install "afmkit[all] @ git+https://github.com/linjiema/afmkit.git@v0.4.0"
+pip install "afmkit[all] @ git+https://github.com/linjiema/afmkit.git@v0.5.0"
 ```
 
 The `[all]` extra pulls in `[io,parquet,igor,matlab,plot,gui]` — everything
@@ -110,10 +110,10 @@ the headline workflows need. Drop it for a minimal install and add extras
 on demand:
 
 ```bash
-pip install "afmkit @ git+https://github.com/linjiema/afmkit.git@v0.4.0"           # core only
-pip install "afmkit[igor] @ git+https://github.com/linjiema/afmkit.git@v0.4.0"    # .ibw round-trip
-pip install "afmkit[gui]  @ git+https://github.com/linjiema/afmkit.git@v0.4.0"    # Textual TUI
-pip install "afmkit[plot] @ git+https://github.com/linjiema/afmkit.git@v0.4.0"    # matplotlib panel
+pip install "afmkit @ git+https://github.com/linjiema/afmkit.git@v0.5.0"           # core only
+pip install "afmkit[igor] @ git+https://github.com/linjiema/afmkit.git@v0.5.0"    # .ibw round-trip
+pip install "afmkit[gui]  @ git+https://github.com/linjiema/afmkit.git@v0.5.0"    # Textual TUI
+pip install "afmkit[plot] @ git+https://github.com/linjiema/afmkit.git@v0.5.0"    # matplotlib panel
 ```
 
 ### From Python — load, fit, review
@@ -158,7 +158,7 @@ afmkit gui                                       # launch the Textual TUI
 ### Try the TUI in 30 seconds
 
 ```bash
-pip install "afmkit[gui,plot] @ git+https://github.com/linjiema/afmkit.git@v0.4.0"
+pip install "afmkit[gui,plot] @ git+https://github.com/linjiema/afmkit.git@v0.5.0"
 afmkit gui
 # → press `o`, type a directory of JPK .txt files, hit Enter
 # → arrow-keys to a curve, press `f` to fit, `P` to toggle the plot panel
@@ -262,7 +262,7 @@ CI matrix is green on every cell. Local gates are `ruff check` + `ruff format --
 | macos-latest | ✅ | ✅ | ✅ |
 | windows-latest | ✅ | ✅ | ✅ |
 
-Test count: 414 unit + 12 doctest (6 doctest marked `+SKIP` for examples
+Test count: 436 unit + 12 doctest (6 doctest marked `+SKIP` for examples
 that depend on a runtime data folder).
 
 ---
@@ -331,7 +331,7 @@ If afmkit helped your research, please cite it:
 @software{afmkit,
   title = {afmkit: a Python toolkit for single-molecule force spectroscopy},
   url = {https://github.com/linjiema/afmkit},
-  version = {0.4.0},
+  version = {0.5.0},
   year = {2026},
 }
 ```
