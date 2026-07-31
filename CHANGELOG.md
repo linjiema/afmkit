@@ -28,15 +28,28 @@ New feature work piles on top; the v0.6 tag is the next cut.
   `sfA`, `sfB`, `nDim`, `fsValid`, `topFullScale`, `botFullScale`,
   and the `npnts`-length wData payload.
 
+- **TUI plot panel native terminal image (Sixel / Kitty / iTerm)**
+  — `ForceExtensionPlot` now supports a native terminal-image
+  renderable in addition to the v0.4 half-block path.  When the
+  optional `[plot-native]` extra (`textual-image>=0.13`) is
+  installed and the running terminal advertises a native image
+  protocol, the matplotlib figure is rendered through that
+  protocol — full colour, native resolution, no half-block
+  approximation.  The default `prefer_native=None` auto-detects:
+  use the native path when the package is installed, fall back
+  to the v0.4 half-block path otherwise.  The half-block path
+  remains the zero-dep default contract — the `[plot-native]`
+  extra is a strict upgrade, never a regression.  A new
+  `prefer_native=True/False` constructor argument lets callers
+  force one path or the other; the new
+  `tests/unit/test_plot.py::TestNativeImageRenderable` class
+  exercises the dispatch and the import-error fallbacks.
+
 ### Known limitations (v0.6+ roadmap)
 
-- **Matplotlib TUI plot panel native image** — the v0.4
-  plot panel renders the matplotlib figure as a half-block
-  text image via `rich.Console`. A native image render via
-  the Textual image protocol (Sixel / Kitty / iTerm
-  graphics) would be sharper and faster on terminals that
-  support it. The half-block path is the v0.4 default
-  because it works everywhere.
+_None — the two v0.6 candidate items have shipped (`.ibw` v5
+stdlib reader in v0.6 #1, TUI native image in v0.6 #2).  More
+candidates may appear before the v0.6 release cut._
 
 ## [0.5.0] — 2026-07-31
 
