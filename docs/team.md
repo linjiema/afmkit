@@ -44,6 +44,19 @@ Verifier 通过后才由 Lead commit + push。**Coder 不直接 push**。
 
 ## 状态
 
-- 当前 phase：**Phase 1 — Core & IO**
-- 下一个 phase：Phase 2 — Models & Fitting
-- 完整路线图：见 README.md 与用户沟通过的 5-phase plan
+- **当前 release：v0.5.0**（2026-07-31）— `to_mat` / `to_parquet` 接 fits+reviewers，`.ibw` note 全 rehydrate + `roundtrip_ibw` helper
+- **当前 develop HEAD：v0.5.0.dev0**（v0.5 切完后的下个 cycle 起点）
+- 下一个 phase：v0.5.1（修 + 增量），或者直接进 v0.6 候选（`.ibw` v5 stdlib-only reader / matplotlib TUI native image / FJC 2-col round-trip helper / 等）
+- 完整路线图：见 [`CHANGELOG.md`][changelog] 的 `## [Unreleased]` 段（含 v0.5+ 候选）和 [`docs/v0.3-roadmap.md`](v0.3-roadmap.md)（已 SHIPPED，作为历史记录保留）
+
+[changelog]: https://github.com/linjiema/afmkit/blob/main/CHANGELOG.md
+
+## Phase history
+
+| Version | Date | Theme |
+|---|---|---|
+| v0.1.0 | 2026-07-29 | Core data model, JPK loader, WLC, lmfit, exporters (CSV / `.mat` / Parquet / Markdown) |
+| v0.2.0 | 2026-07-30 | Sawtooth peak detection, Igor `.ibw` v2 round-trip, eWLC model, Textual TUI, pluggy |
+| v0.3.0 | 2026-07-30 | FJC model, peak review data model, TUI integration, mkdocs site |
+| v0.4.0 | 2026-07-30 | v0.3 retrospective (workflow / release checklist), peak review in CSV+Markdown, real matplotlib in TUI, `.ibw` v5, pre-commit in CI, pluggy fix |
+| v0.5.0 | 2026-07-31 | Peak review in `.mat`+Parquet (multi-file layout), `.ibw` note full rehydration + `roundtrip_ibw` |
