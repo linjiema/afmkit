@@ -77,55 +77,64 @@ class TestModuleImport:
     """The v0.6+ contract: ``import afmkit.io.igor_ibw`` must succeed
     on a minimal install that doesn't have the ``igor`` package.
 
-    We verify the contract by re-importing the module with the
-    ``igor`` module name blocked.  If the module re-imports
-    successfully (and the v1/v2/v3 path fails loudly when invoked),
-    the v5 read path is truly stdlib-only.
+    We verify the contract by patching :func:`builtins.__import__`
+    so that any attempt to import ``igor`` (or any submodule of it)
+    raises :class:`ImportError`.  A fresh re-import of
+    :mod:`afmkit.io.igor_ibw` is then performed: if it succeeds
+    (because :mod:`afmkit.io.igor_ibw` doesn't touch ``igor`` at
+    import time), the v5 read path is truly stdlib-only.
+
+    We can't simply drop ``igor`` from :data:`sys.modules` — that
+    would make Python try to re-import the real package, which would
+    succeed on a CI environment where ``igor`` happens to be
+    installed (i.e. this exact test environment).  Patching
+    :func:`builtins.__import__` is the only reliable way to make
+    ``import igor`` raise without actually uninstalling the package.
     """
 
     def test_module_imports_without_igor_package(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Re-import the module with ``igor`` blocked from ``sys.modules``.
+        """Re-import :mod:`afmkit.io.igor_ibw` with ``igor`` blocked at
+        the import-system level.
 
         A fresh import is required because the module may have been
         imported earlier in the test session (with ``igor`` present).
-        We force a re-import by removing the cached module first, then
-        we install a stub for ``igor.binarywave`` that raises
-        ``ImportError`` if anything tries to use it during the
-        re-import.  The test passes if the import succeeds (the
-        re-import doesn't touch ``igor.binarywave``) and the v5 read
-        path works in the rest of the suite.
+        We force a re-import by clearing the cached
+        :mod:`afmkit.io.igor_ibw` and :mod:`afmkit.io` entries from
+        :data:`sys.modules`, then we install a wrapper around
+        :func:`builtins.__import__` that raises :class:`ImportError`
+        for any ``igor`` import.  The test passes if the re-import
+        succeeds (the re-import doesn't touch ``igor``) and
+        :func:`_get_binarywave` raises a clear, actionable
+        :class:`ImportError` when actually called.
         """
-        # Remove any cached afmkit.io.igor_ibw so the import below
-        # is a real re-import.
-        monkeypatch.delitem(sys.modules, "afmkit.io.igor_ibw", raising=False)
-        monkeypatch.delitem(sys.modules, "afmkit.io", raising=False)
+        import builtins
 
-        # Block igor.binarywave: replace it with a stub that raises
-        # ImportError if anything tries to import it during the
-        # afmkit re-import.
-        def _explode(*args: object, **kwargs: object) -> None:
-            raise ImportError("igor is blocked for this test")
+        # Remove cached afmkit modules so the re-import is real.
+        for mod_name in list(sys.modules):
+            if mod_name == "afmkit.io.igor_ibw" or mod_name == "afmkit.io":
+                monkeypatch.delitem(sys.modules, mod_name)
 
-        # We can't easily block the parent ``igor`` package, but the
-        # only thing afmkit imports is ``igor.binarywave`` (and that
-        # only inside _get_binarywave, which is never called at
-        # import time).  Block ``igor.binarywave`` by inserting a
-        # ``ModuleType`` that raises on first attribute access.
-        import types
+        # Wrap builtins.__import__ so any ``import igor`` (or
+        # ``import igor.binarywave`` etc.) raises ImportError.
+        original_import = builtins.__import__
 
-        class _BlockedBinarywave:
-            def __getattr__(self, name: str) -> object:
-                _explode()
-                return None  # unreachable
+        def _blocked_import(
+            name: str,
+            globals: object | None = None,  # - match builtins signature
+            locals: object | None = None,  # - match builtins signature
+            fromlist: tuple[str, ...] = (),
+            level: int = 0,
+        ) -> object:
+            if name == "igor" or name.startswith("igor."):
+                raise ImportError(f"igor is blocked for this test ({name!r})")
+            return original_import(name, globals, locals, fromlist, level)
 
-        blocked = types.ModuleType("igor")
-        blocked.binarywave = _BlockedBinarywave()  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "igor", blocked)
-        monkeypatch.setitem(sys.modules, "igor.binarywave", blocked.binarywave)  # type: ignore[attr-defined]
+        monkeypatch.setattr(builtins, "__import__", _blocked_import)
 
-        # Now re-import — this must not raise.
+        # Re-import afmkit.io.igor_ibw — must not raise.
         mod = importlib.import_module("afmkit.io.igor_ibw")
         assert mod is not None
+
         # The lazy helper exists and is callable; calling it should
         # fail with a clear ImportError because the block is in place.
         with pytest.raises(ImportError, match="afmkit\\[igor\\]"):
