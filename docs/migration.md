@@ -332,21 +332,39 @@ For deeper dives:
 A short list of "this would have eaten an afternoon of debugging"
 moments, with the fix for each.
 
-### 1. The `.ibw` reader wants the `igor` extra
+### 1. The `.ibw` reader and the `igor` extra
 
-`afmkit.io.igor_ibw.load_ibw` delegates to the upstream
-`igor.binarywave.load` (the v5 path; the v2 writer is a stdlib
-emitter). The `igor` PyPI package is an optional `[igor]` extra
-on the v0.5 install:
+The `igor` PyPI package is an optional `[igor]` extra. Whether you
+need it depends on the wave version:
+
+- **v5** (the modern Igor Pro 6.00+ layout — also the layout
+  afmkit's own writer emits) is read by a stdlib-only loader in
+  afmkit. **No `igor` extra required.**
+- **v1 / v2 / v3** (older waves, hand-written in Igor or exported
+  by other tools) still delegate to `igor.binarywave.load` and
+  require the extra.
+
+The `igor` extra on the v0.5 install is:
 
 ```bash
 pip install "afmkit[igor] @ git+https://github.com/linjiema/afmkit.git@v0.5.0"
 ```
 
-Without the extra, `from afmkit.io.igor_ibw import load_ibw` raises
-`ImportError`. The fastest workaround if you can't add the extra
-is to export from Igor as plain text and wrap each pair of columns
-in a `ForceCurve`:
+!!! note "v0.6+ (unreleased)"
+    The v0.6 release makes the v5 read path stdlib-only and turns
+    the `import igor.binarywave` call into a lazy, function-level
+    import. After v0.6 lands, `import afmkit.io.igor_ibw` and
+    `load_ibw(path_to_v5_file)` both work on a minimal install
+    without the `igor` extra; only `load_ibw(path_to_v1_v2_v3_file)`
+    raises `ImportError`. See the `Known limitations` / `Added`
+    section in [`CHANGELOG.md`](https://github.com/linjiema/afmkit/blob/main/CHANGELOG.md)
+    for the exact wording.
+
+Without the extra on v0.5, `from afmkit.io.igor_ibw import load_ibw`
+raises `ImportError` (the module still imports the package eagerly
+at load time on v0.5; the lazy import lands in v0.6). The fastest
+workaround if you can't add the extra is to export from Igor as
+plain text and wrap each pair of columns in a `ForceCurve`:
 
 ```python
 import numpy as np

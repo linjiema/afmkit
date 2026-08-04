@@ -9,7 +9,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "afmkit"
-version = "0.5.0"
+version = "0.6.0"
 description = "Modern Python toolkit for single-molecule force spectroscopy data analysis."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -98,6 +98,17 @@ plot = [
 gui = [
     "textual>=0.50",
 ]
+# Native terminal image rendering for the TUI plot panel (Sixel /
+# Kitty / iTerm graphics via the ``textual-image`` library).
+# Separate from ``[plot]`` so the v0.4 half-block default keeps
+# its zero-dependency contract: a minimal ``[plot]`` install
+# never needs ``textual-image``.  The plot widget auto-detects
+# terminal capability and only uses this path when both the
+# package is installed and the terminal supports a native
+# image protocol.
+plot-native = [
+    "textual-image>=0.12",
+]
 # Documentation build.
 docs = [
     "mkdocs>=1.5",
@@ -108,7 +119,7 @@ docs = [
 ]
 # Convenience: install everything an end-user might want.
 all = [
-    "afmkit[io,parquet,igor,matlab,plot,gui]",
+    "afmkit[io,parquet,igor,matlab,plot,plot-native,gui]",
 ]
 # Developer / CI dependencies.
 dev = [
@@ -150,6 +161,17 @@ dev = [
     # save() is still NotImplementedError there too). Pin to >=0.3
     # to match the version that's actually installable.
     "igor>=0.3",
+    # ``textual-image`` is the v0.6+ native terminal image renderable
+    # for the plot widget (the ``[plot-native]`` extra). Install it
+    # here so the CI test matrix exercises TestNativeImageRenderable
+    # end-to-end and mypy --strict can resolve
+    # ``import textual_image`` in plot.py.  End users get the
+    # native path via the ``[plot-native]`` extra; the half-block
+    # fallback path (the v0.4 default) is the zero-dep contract.
+    # Floor at 0.12 because 0.13+ require Python >= 3.12; the CI
+    # test matrix still covers py3.11, so the dev install must
+    # work on py3.11 too.
+    "textual-image>=0.12",
 ]
 
 [project.urls]

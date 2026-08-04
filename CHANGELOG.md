@@ -6,23 +6,101 @@ and the format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1
 
 ## [Unreleased]
 
-New feature work piles on top; the v0.6 tag is the next cut.
+New feature work piles on top; the v0.7 tag is the next cut.
 
-### Known limitations (v0.6+ roadmap)
+### Known limitations (v0.7+ roadmap)
 
-- **`.ibw` v5 reader improvements** — the v0.4 reader still
-  delegates to the upstream `igor.binarywave.load` for v5.
-  A stdlib-only v5 reader (matching the v2 / v5 writer
-  pattern) would let us drop the `igor` runtime dep for the
-  read path too, and would let us test the v5 round-trip
-  byte-by-byte instead of via the upstream black box.
-- **Matplotlib TUI plot panel native image** — the v0.4
-  plot panel renders the matplotlib figure as a half-block
-  text image via `rich.Console`. A native image render via
-  the Textual image protocol (Sixel / Kitty / iTerm
-  graphics) would be sharper and faster on terminals that
-  support it. The half-block path is the v0.4 default
-  because it works everywhere.
+- _None at cut time.  Add v0.7 candidate items here as they
+  land on `develop`._
+
+## [0.6.0] — 2026-08-04
+
+**The dependency-light release.** v0.5 already shipped a
+fully-lossless `.ibw` round-trip and the symmetric `to_mat` /
+`to_parquet` peak-review plumbing; v0.6 narrows the runtime
+footprint and sharpens the interactive path.  The headline
+items are: (1) the v5 read path no longer needs the optional
+`igor` package (a small stdlib + NumPy reader replaces the
+upstream black box for v5 files), and (2) the TUI plot panel
+gains a native-terminal-image renderable (Sixel / Kitty /
+iTerm graphics via the new `[plot-native]` extra) on top of
+the v0.4 half-block fallback.  Both are strict upgrades over
+v0.5: v0.4 / v0.5 callers see no behaviour change unless
+they explicitly opt in.
+
+**Install**
+
+```bash
+pip install "afmkit @ git+https://github.com/linjiema/afmkit.git@v0.6.0"
+```
+
+Optional extras:
+
+```bash
+pip install "afmkit[igor] @ ..."        # Igor .ibw v1/v2/v3 read
+pip install "afmkit[gui] @ ..."         # Textual TUI
+pip install "afmkit[plot] @ ..."        # matplotlib plot panel
+pip install "afmkit[plot-native] @ ..." # native terminal image (Kitty/iTerm/Sixel)
+pip install "afmkit[parquet] @ ..."     # pyarrow Parquet export
+```
+
+### Added
+
+- **`.ibw` v5 stdlib-only reader** — `load_ibw` no longer needs
+  the optional `igor` package for v5 files. The v5 path now goes
+  through a small, stdlib + NumPy reader
+  (`_load_ibw_v5_stdlib`) that mirrors the on-disk layout the v5
+  writer emits (BinHeader5 = 62 B, WaveHeader5 = 320 B, both with
+  the `=` / standard-size convention; wData as little-endian
+  float64; note bytes verbatim). The `import igor.binarywave`
+  call is now lazy (`:func:`_get_binarywave`), so
+  `import afmkit.io.igor_ibw` works on a minimal install that
+  doesn't have `igor`. v1 / v2 / v3 reads still delegate to
+  `igor.binarywave.load` and require `afmkit[igor]`. The new
+  `tests/unit/test_igor_ibw_v5_stdlib.py` covers the v5 path
+  end-to-end and verifies the round-trip is **byte-exact**:
+  every header field the writer emits is read back with the same
+  value, including the on-disk `bname`, `dataUnits`, `dimUnits`,
+  `sfA`, `sfB`, `nDim`, `fsValid`, `topFullScale`, `botFullScale`,
+  and the `npnts`-length wData payload.
+
+- **TUI plot panel native terminal image (Sixel / Kitty / iTerm)**
+  — `ForceExtensionPlot` now supports a native terminal-image
+  renderable in addition to the v0.4 half-block path.  When the
+  optional `[plot-native]` extra (`textual-image>=0.12`) is
+  installed and the running terminal advertises a native image
+  protocol, the matplotlib figure is rendered through that
+  protocol — full colour, native resolution, no half-block
+  approximation.  The default `prefer_native=None` auto-detects:
+  use the native path when the package is installed, fall back
+  to the v0.4 half-block path otherwise.  The half-block path
+  remains the zero-dep default contract — the `[plot-native]`
+  extra is a strict upgrade, never a regression.  A new
+  `prefer_native=True/False` constructor argument lets callers
+  force one path or the other; the new
+  `tests/unit/test_plot.py::TestNativeImageRenderable` class
+  exercises the dispatch and the import-error fallbacks.
+
+### Fixed
+
+- **v0.6 #1 / v0.5 lazy-import regression** — v0.6 #1 moved
+  the `import igor.binarywave` and the numpy `complex` shim
+  into a lazy helper so a minimal install without `igor` could
+  still load afmkit.  In the process the v0.5 contract that
+  any external `igor.binarywave.load(...)` call sees a
+  populated `sys.modules` was silently lost: the shim no longer
+  ran at module load, and under `pytest -n auto` (xdist parallel)
+  each worker's first `igor.binarywave` access could leave
+  `sys.modules['igor.binarywave']` set to `None` for the rest
+  of the session.  v0.6 restores both the shim and a best-effort
+  `import igor.binarywave as _binarywave` priming at the top of
+  `afmkit.io.igor_ibw` (the latter wrapped in
+  `contextlib.suppress(Exception)` so afmkit still loads cleanly
+  on a minimal install without the package).  The v5-read
+  contract — `import afmkit.io.igor_ibw` works without `igor` —
+  is preserved; v1/v2/v3 reads inside `IgorIBWLoader.load`
+  still surface a clear `ImportError` pointing at the
+  `afmkit[igor]` extra when the package is missing.
 
 ## [0.5.0] — 2026-07-31
 

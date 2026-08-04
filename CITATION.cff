@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use afmkit in your research, please cite it as below."
 title: "afmkit"
 type: software
-date-released: 2026-07-29
+date-released: 2026-08-04
 license: MIT
 url: "https://github.com/linjiema/afmkit"
 authors:
