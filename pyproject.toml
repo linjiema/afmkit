@@ -107,7 +107,7 @@ gui = [
 # package is installed and the terminal supports a native
 # image protocol.
 plot-native = [
-    "textual-image>=0.13",
+    "textual-image>=0.12",
 ]
 # Documentation build.
 docs = [
@@ -168,7 +168,10 @@ dev = [
     # ``import textual_image`` in plot.py.  End users get the
     # native path via the ``[plot-native]`` extra; the half-block
     # fallback path (the v0.4 default) is the zero-dep contract.
-    "textual-image>=0.13",
+    # Floor at 0.12 because 0.13+ require Python >= 3.12; the CI
+    # test matrix still covers py3.11, so the dev install must
+    # work on py3.11 too.
+    "textual-image>=0.12",
 ]
 
 [project.urls]
