@@ -124,6 +124,32 @@ try:
 except Exception:  # pragma: no cover - any failure is non-fatal
     pass
 
+# Prime the ``igor.binarywave`` import at module load time so that
+# external callers (e.g. ``tests/unit/test_igor_ibw.py`` which does
+# ``igor.binarywave.load(...)`` directly, or users in ad-hoc scripts)
+# see a populated ``sys.modules['igor.binarywave']`` the first time
+# they access it.  The v0.5 release relied on this: the eager
+# ``import igor.binarywave as _binarywave`` at module top was the
+# only thing priming the import.  The v0.6 #1 work moved the import
+# inside a lazy helper, which silently broke the priming and made
+# every external ``igor.binarywave.load(...)`` call fail in xdist
+# parallel test runs (because pytest-xdist workers each get a fresh
+# ``sys.modules`` and the first ``igor.binarywave`` access in a
+# worker tries to import with no shim in place, then leaves
+# ``sys.modules['igor.binarywave']`` set to ``None`` for the rest
+# of the session).  Eagerly priming here fixes that.
+#
+# The import is wrapped in a broad try/except so afmkit still loads
+# cleanly on a minimal install without ``igor`` (the v0.6+ v5-read
+# contract): if the package is missing, the import raises
+# ``ImportError`` and we silently skip the priming.  The v1/v2/v3
+# read path inside :func:`_get_binarywave` still surfaces a clear
+# error message pointing at the ``afmkit[igor]`` extra.
+import contextlib
+
+with contextlib.suppress(Exception):
+    import igor.binarywave as _binarywave  # noqa: F401
+
 from afmkit.core.curve import CurveBatch, ForceCurve
 
 #: Public re-exports from this module.
